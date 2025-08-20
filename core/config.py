@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     slide_dir: str = "/mnt/nvme_gds/slides"
     prediction_dir: str = "/mnt/nvme_gds/predictions"
     
+    # Viewer Settings
+    tile_size: int = 512
+    tile_overlap: int = 0
+    tile_format: str = "jpg"
+    
     # Database Settings
     postgres_user: str
     postgres_password: str
