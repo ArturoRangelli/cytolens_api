@@ -1,3 +1,4 @@
+from typing import List
 from pydantic_settings import BaseSettings
 
 
@@ -9,6 +10,25 @@ class Settings(BaseSettings):
     api_version: str  # From API_VERSION env var (critical for model versioning)
     environment: str = "local"  # "local" or "docker"
     debug: bool = False
+    
+    # File Upload Settings
+    allowed_slide_extensions: List[str] = [".svs"]
+    min_file_size: int = 1024 * 1024  # 1MB
+    max_file_size: int = 50 * 1024 * 1024 * 1024  # 50GB
+    
+    # AWS Settings
+    aws_access_key_id: str
+    aws_secret_access_key: str
+    
+    # S3 Settings
+    s3_bucket_name: str
+    s3_slide_folder: str = "slides"
+    s3_temp_slide_folder: str = "temp_slides"
+    s3_results_folder: str = "results"
+    
+    # Local Storage Settings
+    slide_dir: str = "/mnt/nvme_gds/slides"
+    prediction_dir: str = "/mnt/nvme_gds/predictions"
     
     # Database Settings
     postgres_user: str

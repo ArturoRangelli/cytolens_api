@@ -1,7 +1,6 @@
 from contextlib import contextmanager
 
 from sqlalchemy import (
-    Boolean,
     Column,
     ForeignKey,
     Integer,
@@ -9,7 +8,6 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
 )
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, scoped_session, sessionmaker
 
@@ -137,16 +135,18 @@ def model_to_dict(obj):
 
 
 # User operations
-def set_user(username: str, password_hash: str, role: str = "user") -> None:
+def set_user(username: str, password_hash: str, role: str = "user") -> dict:
+    """
+    Create a new user in the database.
+    """
     with session_scope() as s:
-        existing = s.query(User).filter_by(username=username).first()
-        if existing:
-            raise ValueError("Username already exists")
         user = User(username=username, password_hash=password_hash, role=role)
         s.add(user)
+        s.flush()
+        return model_to_dict(user)
 
 
-def get_user_by_username(username: str) -> User:
+def get_user_by_username(username: str) -> dict | None:
     """
     Retrieve a user object by username.
     """
@@ -154,7 +154,7 @@ def get_user_by_username(username: str) -> User:
         user = s.query(User).filter_by(username=username).first()
         if user:
             return model_to_dict(user)
-        return {}
+        return None
 
 
 def get_user_by_apikey(hashed_key: str) -> dict | None:
@@ -173,14 +173,9 @@ def set_apikey(
     user_id: int, hashed_key: str, name: str, expires_at: str = None
 ) -> dict:
     """
-    Save a new API key for a user, ensuring unique name per user.
+    Create a new API key for a user.
     """
     with session_scope() as s:
-        existing = s.query(ApiKey).filter_by(user_id=user_id, name=name).first()
-
-        if existing:
-            raise ValueError(f"API key with name '{name}' already exists for this user")
-
         created_at = sys_utils.get_current_time(milliseconds=False)
         api_key = ApiKey(
             user_id=user_id,
@@ -190,13 +185,20 @@ def set_apikey(
             expires_at=expires_at,
         )
 
-        try:
-            s.add(api_key)
-            s.flush()  # Triggers the integrity constraint without committing
-        except IntegrityError:
-            raise ValueError("API key already exists (hash collision, try again)")
-
+        s.add(api_key)
+        s.flush()
         return model_to_dict(api_key)
+
+
+def get_apikey_by_name(user_id: int, name: str) -> dict | None:
+    """
+    Get an API key by name for a specific user.
+    """
+    with session_scope() as s:
+        api_key = s.query(ApiKey).filter_by(user_id=user_id, name=name).first()
+        if api_key:
+            return model_to_dict(api_key)
+        return None
 
 
 # Slide operations
@@ -209,14 +211,9 @@ def set_slide(
     type: str,
 ) -> dict:
     """
-    Insert a new slide, ensuring name is unique for that owner.
+    Insert a new slide into the database.
     """
     with session_scope() as s:
-        # Enforce unique name per owner
-        existing = s.query(Slide).filter_by(name=name, owner_id=owner_id).first()
-        if existing:
-            raise ValueError(f"Slide name '{name}' already exists for this user.")
-
         slide = Slide(
             name=name,
             model_id=model_id,
@@ -230,34 +227,31 @@ def set_slide(
         return model_to_dict(slide)
 
 
-def update_slide(slide_id: int, **fields_to_update) -> dict:
+def update_slide(slide_id: int, owner_id: int, **fields_to_update) -> dict | None:
     """
-    Update specific fields of a slide using its ID.
+    Update specific fields of a slide by slide_id and owner_id.
     """
     with session_scope() as s:
-        slide = s.query(Slide).get(slide_id)
+        slide = s.query(Slide).filter_by(id=slide_id, owner_id=owner_id).first()
         if not slide:
-            raise ValueError(f"Slide with ID {slide_id} not found")
+            return None
 
         for key, value in fields_to_update.items():
             if hasattr(slide, key):
                 setattr(slide, key, value)
-            else:
-                raise ValueError(f"Invalid field '{key}' for Slide")
 
         s.flush()
         return model_to_dict(slide)
 
 
-def delete_slide(slide_id: int) -> None:
+def delete_slide(slide_id: int, owner_id: int) -> None:
     """
-    Delete a slide and all associated data by slide_id.
+    Delete a slide by slide_id and owner_id.
     """
     with session_scope() as s:
-        slide = s.query(Slide).filter_by(id=slide_id).first()
-        if not slide:
-            raise ValueError(f"Slide with ID {slide_id} does not exist.")
-        s.delete(slide)
+        slide = s.query(Slide).filter_by(id=slide_id, owner_id=owner_id).first()
+        if slide:
+            s.delete(slide)
 
 
 def get_slide_by_id(slide_id: int, owner_id: int) -> dict | None:

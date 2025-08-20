@@ -1,0 +1,258 @@
+import math
+import os
+from typing import Dict, List, Optional
+
+from core import config
+from utils import aws_utils, postgres_utils, sys_utils
+
+
+async def get_slides(user_id: int) -> List[dict]:
+    """
+    Get all slides for a specific user.
+    """
+    slides = postgres_utils.get_slides(owner_id=user_id)
+    return slides
+
+
+async def get_slide(slide_id: int, user_id: int) -> Optional[Dict]:
+    """
+    Get a single slide by ID for a specific user.
+    Returns None if slide doesn't exist or user doesn't own it.
+    """
+    slide = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
+    return slide
+
+
+async def start_upload(filename: str, name: str, file_size: int, user_id: int) -> Dict:
+    """
+    Initialize S3 multipart upload and generate presigned URLs for each part.
+    Checks name uniqueness before starting upload.
+    """
+    # Check if slide name already exists for this user
+    existing_slide = postgres_utils.get_slide_by_name(name=name, owner_id=user_id)
+    if existing_slide:
+        raise ValueError(f"Slide with name '{name}' already exists")
+
+    # Generate unique S3 key
+    timestamp = sys_utils.get_current_time(milliseconds=True)
+    file_id = f"{user_id}_{timestamp}"
+    s3_key = f"{config.settings.s3_temp_slide_folder}/{file_id}"
+
+    # Start multipart upload
+    upload_id = aws_utils.create_multipart_upload(
+        bucket=config.settings.s3_bucket_name, key=s3_key
+    )
+
+    # Calculate number of parts (100MB per part)
+    part_size = 100 * 1024 * 1024  # 100MB
+    num_parts = math.ceil(file_size / part_size)
+
+    # Generate presigned URL for each part
+    presigned_urls = []
+    for part_number in range(1, num_parts + 1):
+        presigned_url = aws_utils.generate_multipart_presigned_url(
+            bucket=config.settings.s3_bucket_name,
+            key=s3_key,
+            upload_id=upload_id,
+            part_number=part_number,
+            expiry=7200,  # 2 hours
+        )
+
+        presigned_urls.append({"part_number": part_number, "url": presigned_url})
+
+    return {
+        "upload_id": upload_id,
+        "s3_key": s3_key,
+        "file_id": file_id,
+        "part_size": part_size,
+        "num_parts": num_parts,
+        "presigned_urls": presigned_urls,
+    }
+
+
+async def finish_upload(
+    upload_id: str,
+    s3_key: str,
+    parts: List[Dict],
+    name: str,
+    model_id: int,
+    filename: str,
+    user_id: int,
+) -> Dict:
+    """
+    Complete the multipart upload and create slide record.
+    Validates model_id exists and name is unique.
+    """
+    # Validate model_id exists
+    model = postgres_utils.get_model(model_id=model_id)
+    if not model:
+        raise ValueError(f"Model with id {model_id} does not exist")
+
+    # Check if slide name already exists for this user
+    existing_slide = postgres_utils.get_slide_by_name(name=name, owner_id=user_id)
+    if existing_slide:
+        raise ValueError(f"Slide with name '{name}' already exists")
+
+    # Complete S3 multipart upload
+    aws_utils.complete_multipart_upload(
+        bucket=config.settings.s3_bucket_name,
+        key=s3_key,
+        upload_id=upload_id,
+        parts=parts,
+    )
+
+    # Create slide record
+    created_at = sys_utils.get_current_time(milliseconds=False)
+    ext = sys_utils.get_file_ext(filename=filename).replace(".", "")
+
+    slide = postgres_utils.set_slide(
+        name=name,
+        model_id=model_id,
+        owner_id=user_id,
+        created_at=created_at,
+        original_filename=filename,
+        type=ext,
+    )
+
+    # Move from temp to permanent S3 location
+    permanent_key = f"{config.settings.s3_slide_folder}/{slide['id']}.{ext}"
+
+    aws_utils.copy_file(
+        bucket=config.settings.s3_bucket_name, key_src=s3_key, key_dst=permanent_key
+    )
+
+    aws_utils.delete_file(bucket=config.settings.s3_bucket_name, key=s3_key)
+
+    # Download to local for GPU processing
+    local_path = os.path.join(config.settings.slide_dir, f"{slide['id']}.{ext}")
+    os.makedirs(config.settings.slide_dir, exist_ok=True)
+
+    aws_utils.download_file(
+        bucket=config.settings.s3_bucket_name, key=permanent_key, local_path=local_path
+    )
+
+    return {"slide_id": slide["id"], "status": "ready"}
+
+
+async def cancel_upload(upload_id: str, s3_key: str) -> Dict:
+    """
+    Abort a multipart upload and clean up.
+    """
+    aws_utils.abort_multipart_upload(
+        bucket=config.settings.s3_bucket_name, key=s3_key, upload_id=upload_id
+    )
+    return {"status": "aborted"}
+
+
+async def delete_slide(slide_id: int, user_id: int) -> Dict:
+    """
+    Delete a slide from database and S3.
+    Checks ownership before deletion.
+    Gracefully handles missing S3 files.
+    """
+    # Step 1: Get slide from DB and verify ownership
+    slide = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
+
+    if not slide:
+        raise ValueError(f"Slide {slide_id} not found")
+
+    # Step 2: Build S3 keys for both possible locations
+    file_ext = slide.get("type", "svs")
+    permanent_s3_key = f"{config.settings.s3_slide_folder}/{slide_id}.{file_ext}"
+
+    # Step 3: Delete from S3 (if exists)
+    if aws_utils.file_exists(
+        bucket=config.settings.s3_bucket_name, key=permanent_s3_key
+    ):
+        aws_utils.delete_file(
+            bucket=config.settings.s3_bucket_name, key=permanent_s3_key
+        )
+
+    # Step 4: Delete from local storage (if exists)
+    local_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{file_ext}")
+    sys_utils.delete_local_file(local_path)
+
+    # Step 5: Delete from database
+    postgres_utils.delete_slide(slide_id=slide_id, owner_id=user_id)
+    
+    # Step 6: Return success message
+    return {"message": f"Slide {slide_id} deleted successfully"}
+
+
+async def bulk_delete_slides(slide_ids: List[int], user_id: int) -> Dict:
+    """
+    Delete multiple slides at once.
+    Returns information about which slides were deleted and which failed.
+    """
+    deleted_ids = []
+    failed_ids = []
+    
+    for slide_id in slide_ids:
+        # Get slide info first
+        slide = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
+        
+        if not slide:
+            failed_ids.append(slide_id)
+            continue
+        
+        # Build S3 key
+        file_ext = slide.get("type", "svs")
+        permanent_s3_key = f"{config.settings.s3_slide_folder}/{slide_id}.{file_ext}"
+        
+        # Delete from S3 (if exists)
+        if aws_utils.file_exists(bucket=config.settings.s3_bucket_name, key=permanent_s3_key):
+            aws_utils.delete_file(bucket=config.settings.s3_bucket_name, key=permanent_s3_key)
+        
+        # Delete from local storage (if exists)
+        local_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{file_ext}")
+        sys_utils.delete_local_file(local_path)
+        
+        # Delete from database
+        postgres_utils.delete_slide(slide_id=slide_id, owner_id=user_id)
+        deleted_ids.append(slide_id)
+    
+    return {
+        "message": f"Bulk delete completed. {len(deleted_ids)} slides deleted.",
+        "deleted_count": len(deleted_ids),
+        "deleted_ids": deleted_ids,
+        "failed_ids": failed_ids
+    }
+
+
+async def update_slide(slide_id: int, name: str, user_id: int) -> Dict:
+    """
+    Update a slide's name.
+    Checks ownership and name uniqueness before updating.
+    """
+    # Step 1: Check if slide exists and user owns it
+    slide = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
+    
+    if not slide:
+        raise ValueError(f"Slide {slide_id} not found or you don't have permission to update it")
+    
+    # Step 2: If the name is the same, no need to update
+    if slide["name"] == name:
+        return {
+            "message": "Slide name unchanged",
+            "slide": slide
+        }
+    
+    # Step 3: Check if new name already exists for this user
+    existing_slide = postgres_utils.get_slide_by_name(name=name, owner_id=user_id)
+    if existing_slide and existing_slide["id"] != slide_id:
+        raise ValueError(f"Slide with name '{name}' already exists")
+    
+    # Step 4: Update the slide name
+    updated_slide = postgres_utils.update_slide(
+        slide_id=slide_id,
+        owner_id=user_id,
+        name=name
+    )
+    
+    if not updated_slide:
+        raise ValueError(f"Failed to update slide {slide_id}")
+    
+    return {
+        "message": f"Slide {slide_id} updated successfully",
+        "slide": updated_slide
+    }

@@ -4,24 +4,35 @@ from boto3.s3.transfer import TransferConfig
 from botocore.client import Config
 from botocore.exceptions import ClientError
 
+from core import config
+
 # Use signature v4 for KMS-encrypted buckets
-s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
+s3_client = boto3.client(
+    "s3",
+    aws_access_key_id=config.settings.aws_access_key_id,
+    aws_secret_access_key=config.settings.aws_secret_access_key,
+    config=Config(signature_version="s3v4")
+)
 
 
 def copy_file(bucket: str, key_src: str, key_dst: str) -> None:
     """
     Copy an object within the same S3 bucket, supporting large files via multipart copy.
     """
-    s3 = resource("s3")
+    s3 = resource(
+        "s3",
+        aws_access_key_id=config.settings.aws_access_key_id,
+        aws_secret_access_key=config.settings.aws_secret_access_key,
+    )
 
-    config = TransferConfig(
+    transfer_config = TransferConfig(
         multipart_threshold=5 * 1024**3,  # Files above 5 GB use multipart
         multipart_chunksize=64 * 1024**2,  # Each part = 64 MB
         max_concurrency=10,  # Number of threads
     )
 
     copy_source = {"Bucket": bucket, "Key": key_src}
-    s3.meta.client.copy(copy_source, bucket, key_dst, Config=config)
+    s3.meta.client.copy(copy_source, bucket, key_dst, Config=transfer_config)
 
 
 def delete_file(bucket: str, key: str) -> None:
@@ -51,7 +62,7 @@ def download_file(bucket: str, key: str, local_path: str) -> None:
     """
     Download a file from S3 to a local path.
     """
-    config = TransferConfig(
+    transfer_config = TransferConfig(
         multipart_threshold=5 * 1024**3,  # Files above 5 GB use multipart
         multipart_chunksize=64 * 1024**2,  # Each part = 64 MB
         max_concurrency=10,  # Number of threads
@@ -61,7 +72,7 @@ def download_file(bucket: str, key: str, local_path: str) -> None:
         Bucket=bucket,
         Key=key,
         Filename=local_path,
-        Config=config
+        Config=transfer_config
     )
 
 

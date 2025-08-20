@@ -42,3 +42,14 @@ def get_current_time(milliseconds=False) -> str:
     if milliseconds:
         return datetime.now().strftime("%Y_%m_%d_%H_%M_%S_%f")
     return datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+
+
+def delete_local_file(file_path: str) -> bool:
+    """
+    Delete a file from local storage if it exists.
+    Returns True if file was deleted, False if file didn't exist.
+    """
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        return True
+    return False

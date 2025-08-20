@@ -47,6 +47,10 @@ async def create_api_key(
     if not user:
         raise ValueError("Invalid session")
 
+    # Check if API key name already exists for this user
+    if postgres_utils.get_apikey_by_name(user_id=user["id"], name=name):
+        raise ValueError(f"API key with name '{name}' already exists for this user")
+    
     raw_key = secrets.token_urlsafe(32)
     hashed_key = hashlib.sha256(raw_key.encode()).hexdigest()
 
