@@ -1,5 +1,7 @@
 import os
+from typing import Dict
 
+from api.schemas.viewer import PredictionsResponse
 from core import config
 from utils import postgres_utils, slide_utils
 
@@ -62,3 +64,55 @@ async def get_tile(
     )
 
     return jpeg_bytes
+
+
+async def get_predictions(slide_id: int, user_id: int) -> Dict:
+    """
+    Get inference predictions for a slide with bounding boxes.
+    """
+    # Check if slide exists and it belongs to the user
+    slide_db = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
+
+    if not slide_db:
+        raise ValueError(f"Slide {slide_id} not found")
+
+    pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
+    if not os.path.isfile(path=pkl_path):
+        raise ValueError(f"Predictions not found for slide {slide_id}")
+
+    ext = slide_db["type"]
+    slide_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{ext}")
+    _, full_width, full_height, _, _ = slide_utils.get_slide_info_cached(slide_path)
+    results = slide_utils.load_inference_file(pkl_path=pkl_path)
+
+    # Prepare segments with bounding boxes for efficient rendering
+    segments = []
+    for seg in results.get("continuous_segments", []):
+        polygon = seg["polygon"]
+        xs = [p[0] for p in polygon]
+        ys = [p[1] for p in polygon]
+
+        segments.append(
+            {
+                "polygon": polygon,
+                "class_name": seg["class_name"],
+                "area": seg.get("area", 0),
+                "estimated_cells": seg.get("estimated_cells", 0),
+                "bounds": {
+                    "minX": min(xs),
+                    "maxX": max(xs),
+                    "minY": min(ys),
+                    "maxY": max(ys),
+                },
+            }
+        )
+
+    return {
+        "segments": segments,
+        "wsi_dimensions": {"width": full_width, "height": full_height},
+        "classes": {
+            "BETHESDA_2": {"color": "#22c55e", "alpha": 0.7},
+            "BETHESDA_6": {"color": "#ef4444", "alpha": 0.8},
+            "edge": {"color": "#ffffff", "alpha": 0.4},
+        },
+    }
