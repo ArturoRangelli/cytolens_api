@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from api import exceptions
 from api.routes import auth as auth_routes
+from api.routes import inference as inference_routes
 from api.routes import slides as slides_routes
 from api.routes import viewer as viewer_routes
 from core import config
@@ -59,6 +60,7 @@ app.add_middleware(
 app.include_router(auth_routes.router)
 app.include_router(slides_routes.router)
 app.include_router(viewer_routes.router)
+app.include_router(inference_routes.router)
 
 # Register exception handlers
 app.add_exception_handler(ValidationError, exceptions.validation_exception_handler)

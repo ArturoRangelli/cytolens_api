@@ -1,0 +1,207 @@
+from typing import Any, Dict, List
+
+import httpx
+
+from core import config, constants
+from utils import postgres_utils
+
+
+async def start_inference(
+    slide_id: int, user_id: int, confidence: float = constants.Defaults.CONFIDENCE
+) -> Dict[str, Any]:
+    """
+    Start inference for a slide by calling the inference service.
+    The inference service will download the slide from S3 directly.
+    """
+    # Verify slide ownership
+    slide_db = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
+    if not slide_db:
+        raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
+
+    # Prepare request matching the inference service schema
+    payload = {
+        "slide_id": str(slide_id),
+        "file_extension": slide_db["type"],
+        "confidence": confidence,
+    }
+
+    headers = {
+        "X-API-Key": config.settings.inference_api_key,
+        "Content-Type": "application/json",
+    }
+
+    # Call inference service
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{config.settings.inference_service_url}/inference",
+            json=payload,
+            headers=headers,
+            timeout=constants.Defaults.INFERENCE_REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Create task in database
+        task = postgres_utils.create_task(
+            slide_id=slide_id,
+            user_id=user_id,
+            inference_task_id=data["inference_task_id"],
+            state=data["state"],
+            confidence=confidence,
+            message=constants.TaskMessage.QUEUED,
+        )
+
+        # Return in format expected by our schema
+        return {
+            "id": str(task["id"]),
+            "state": data["state"],
+            "message": constants.TaskMessage.QUEUED,
+        }
+
+
+async def get_tasks(
+    user_id: int,
+    state: str = None,
+    limit: int = constants.Defaults.TASK_LIMIT,
+    offset: int = constants.Defaults.TASK_OFFSET,
+) -> List[Dict[str, Any]]:
+    """
+    Get all inference tasks for a user.
+    """
+    # Validate state if provided
+    if state is not None and state not in constants.TaskState.ALL:
+        raise ValueError(constants.ErrorMessage.INVALID_STATE)
+
+    tasks = postgres_utils.get_tasks(
+        user_id=user_id, state=state, limit=limit, offset=offset
+    )
+
+    # Format tasks for response
+    return [
+        {
+            "id": str(task["id"]),
+            "slide_id": str(task["slide_id"]),
+            "state": task["state"],
+            "message": task.get("message", ""),
+            "confidence": task.get("confidence"),
+            "created_at": task["created_at"],
+            "completed_at": task.get("completed_at", ""),
+        }
+        for task in tasks
+    ]
+
+
+async def get_task_status(task_id: str, user_id: int) -> Dict[str, Any]:
+    """
+    Get the status of an inference task.
+    """
+    # Validate and convert task_id
+    try:
+        task_id_int = int(task_id)
+    except (ValueError, TypeError):
+        raise ValueError(constants.ErrorMessage.INVALID_TASK_ID)
+
+    # Get task from database, ensuring user owns it
+    task = postgres_utils.get_task_by_id(task_id=task_id_int, user_id=user_id)
+    if not task:
+        raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
+
+    # Return in format expected by our schema
+    return {
+        "id": str(task["id"]),
+        "slide_id": str(task["slide_id"]),
+        "state": task["state"],
+        "message": task.get("message", ""),
+        "confidence": task["confidence"],
+        "created_at": task["created_at"],
+        "completed_at": task.get("completed_at", ""),
+    }
+
+
+async def cancel_task(task_id: str, user_id: int) -> Dict[str, Any]:
+    """
+    Cancel an inference task.
+    """
+    # Validate and convert task_id
+    try:
+        task_id_int = int(task_id)
+    except (ValueError, TypeError):
+        raise ValueError(constants.ErrorMessage.INVALID_TASK_ID)
+
+    # Verify task ownership
+    task = postgres_utils.get_task_by_id(task_id=task_id_int, user_id=user_id)
+    if not task:
+        raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
+
+    # Check if task is already in terminal state to avoid unnecessary API call
+    if task["state"] in constants.TaskState.TERMINAL:
+        return {
+            "id": str(task["id"]),
+            "state": task["state"],
+            "message": constants.TaskMessage.ALREADY_TERMINAL.format(
+                task["state"].lower()
+            ),
+        }
+
+    # Call inference service to cancel
+    headers = {"X-API-Key": config.settings.inference_api_key}
+    async with httpx.AsyncClient() as client:
+        response = await client.delete(
+            f"{config.settings.inference_service_url}/inference/tasks/{task['inference_task_id']}",
+            headers=headers,
+            timeout=constants.Defaults.CANCEL_REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    # Update task status with what the inference service returns
+    postgres_utils.update_task(
+        task_id=task_id_int,
+        user_id=user_id,
+        state=data["state"],  # Will be "REVOKED" from the inference service
+        message=constants.TaskMessage.CANCELLED,
+    )
+
+    return {
+        "id": str(task["id"]),
+        "state": data["state"],  # Return what the inference service sent
+        "message": constants.TaskMessage.CANCELLED,
+    }
+
+
+async def handle_webhook_callback(
+    api_key: str,
+    inference_task_id: str,
+    state: str,
+    message: str,
+    timestamp: str,
+) -> Dict[str, Any]:
+    """
+    Handle webhook callback from inference service when task completes.
+    Updates the task status in the database.
+    """
+    # Verify API key is provided and valid
+    if not api_key:
+        raise ValueError(constants.ErrorMessage.UNAUTHORIZED)
+
+    # Verify the request is from inference service
+    if api_key != config.settings.inference_api_key:
+        raise ValueError(constants.ErrorMessage.UNAUTHORIZED)
+
+    # Update task status
+    updated = postgres_utils.update_task_by_inference_task_id(
+        inference_task_id=inference_task_id,
+        state=state,
+        message=message,
+        completed_at=timestamp,
+    )
+
+    if not updated:
+        raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
+
+    return {
+        "inference_task_id": inference_task_id,
+        "state": state,
+        "message": constants.TaskMessage.STATUS_UPDATED,
+        "received_at": timestamp,
+    }

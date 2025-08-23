@@ -69,6 +69,7 @@ async def get_tile(
 async def get_predictions(slide_id: int, user_id: int) -> Dict:
     """
     Get inference predictions for a slide with bounding boxes.
+    Downloads from S3 if not available locally.
     """
     # Check if slide exists and it belongs to the user
     slide_db = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
@@ -77,8 +78,27 @@ async def get_predictions(slide_id: int, user_id: int) -> Dict:
         raise ValueError(f"Slide {slide_id} not found")
 
     pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
-    if not os.path.isfile(path=pkl_path):
-        raise ValueError(f"Predictions not found for slide {slide_id}")
+    
+    # Download from S3 if not local
+    if not os.path.exists(pkl_path):
+        s3_key = f"{config.settings.s3_results_folder}/{slide_id}.pkl"
+        os.makedirs(config.settings.prediction_dir, exist_ok=True)
+        
+        from utils import aws_utils
+        
+        # Check if file exists in S3
+        if not aws_utils.file_exists(
+            bucket=config.settings.s3_bucket_name,
+            key=s3_key
+        ):
+            raise ValueError(f"Predictions not found for slide {slide_id}")
+        
+        # Download from S3
+        aws_utils.download_file(
+            bucket=config.settings.s3_bucket_name,
+            key=s3_key,
+            local_path=pkl_path
+        )
 
     ext = slide_db["type"]
     slide_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{ext}")

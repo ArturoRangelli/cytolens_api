@@ -1,8 +1,9 @@
-from typing import Dict
+from typing import Dict, List
 
 from fastapi import APIRouter, Depends
 
 from api.dependencies.security import verify_user_access
+from api.schemas import inference as inference_schemas
 from api.schemas.slides import (
     BulkDeleteRequest,
     BulkDeleteResponse,
@@ -56,6 +57,34 @@ async def get_slide(
     return GetSlideResponse(slide=slide)
 
 
+@router.get("/{slide_id}/tasks", response_model=List[inference_schemas.TaskStatusResponse])
+async def get_slide_tasks(
+    slide_id: int,
+    current_user: Dict = Depends(verify_user_access),
+) -> List[inference_schemas.TaskStatusResponse]:
+    """
+    Get all inference tasks for a specific slide.
+    Returns empty list if slide not found or user doesn't own it.
+    """
+    tasks = await slides_service.get_slide_tasks(
+        slide_id=slide_id, 
+        user_id=current_user["id"]
+    )
+    
+    return [
+        inference_schemas.TaskStatusResponse(
+            id=task["id"],
+            slide_id=task["slide_id"],
+            state=task["state"],
+            message=task.get("message"),
+            confidence=task.get("confidence"),
+            created_at=task["created_at"],
+            completed_at=task.get("completed_at"),
+        )
+        for task in tasks
+    ]
+
+
 @router.post("/upload/start", response_model=StartUploadResponse)
 async def start_upload(
     request: StartUploadRequest,
@@ -66,7 +95,6 @@ async def start_upload(
     Validates file type, size, and name uniqueness.
     """
     result = await slides_service.start_upload(
-        filename=request.filename,
         name=request.name,
         file_size=request.file_size,
         user_id=current_user["id"],

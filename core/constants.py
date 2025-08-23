@@ -1,0 +1,45 @@
+"""
+Application constants for the CytoLens API.
+"""
+
+# Task states from Celery (inference service)
+class TaskState:
+    PENDING = "PENDING"
+    STARTED = "STARTED"
+    SUCCESS = "SUCCESS"
+    FAILURE = "FAILURE"
+    REVOKED = "REVOKED"
+    
+    # Terminal states (cannot be changed)
+    TERMINAL = [SUCCESS, FAILURE, REVOKED]
+    
+    # All valid states
+    ALL = [PENDING, STARTED, SUCCESS, FAILURE, REVOKED]
+
+
+# Error messages
+class ErrorMessage:
+    INVALID_STATE = "Invalid state"
+    INVALID_TASK_ID = "Invalid task ID"
+    RESOURCE_NOT_FOUND = "Resource not found"
+    UNAUTHORIZED = "Unauthorized"
+    UPDATE_FAILED = "Update failed"
+
+
+# Task messages
+class TaskMessage:
+    QUEUED = "Inference task queued"
+    CANCELLED = "Inference task cancelled"
+    ALREADY_TERMINAL = "Task already {}"  # Format with state.lower()
+    STATUS_UPDATED = "Task status updated"
+
+
+# Default values
+class Defaults:
+    CONFIDENCE = 0.5
+    TASK_LIMIT = 20
+    TASK_OFFSET = 0
+    
+    # HTTP client timeouts (in seconds)
+    INFERENCE_REQUEST_TIMEOUT = 30.0
+    CANCEL_REQUEST_TIMEOUT = 10.0

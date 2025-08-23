@@ -1,17 +1,22 @@
 from contextlib import contextmanager
 
 from sqlalchemy import (
+    Boolean,
     Column,
+    DateTime,
+    Float,
     ForeignKey,
+    Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, scoped_session, sessionmaker
 
-from core import config
+from core import config, constants
 from utils import sys_utils
 
 # Database connection
@@ -38,6 +43,7 @@ class User(Base):
     role = Column(String, nullable=False, default="user")
 
     slides = relationship("Slide", back_populates="owner")
+    tasks = relationship("InferenceTask", back_populates="user")
 
 
 class Slide(Base):
@@ -63,6 +69,9 @@ class Slide(Base):
     model = relationship("Model", back_populates="slide")
     report = relationship(
         "Report", uselist=False, back_populates="slide", cascade="all, delete-orphan"
+    )
+    tasks = relationship(
+        "InferenceTask", back_populates="slide", cascade="all, delete-orphan"
     )
 
 
@@ -98,6 +107,42 @@ class Model(Base):
     name = Column(String, nullable=False, unique=True)
 
     slide = relationship("Slide", back_populates="model")
+
+
+class InferenceTask(Base):
+    __tablename__ = "inference_tasks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    inference_task_id = Column(
+        String, unique=True, nullable=False
+    )  # External task ID from inference service
+    slide_id = Column(Integer, ForeignKey("slides.id"), nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("users.id"), nullable=False
+    )  # Who requested it
+
+    # Task status and config
+    state = Column(
+        String, nullable=False, default=constants.TaskState.PENDING
+    )  # Celery states: PENDING, STARTED, SUCCESS, FAILURE, REVOKED
+    confidence = Column(Float, nullable=True)
+
+    # Timestamps
+    created_at = Column(String, nullable=False)
+    completed_at = Column(String, nullable=True)
+
+    # Results and errors
+    message = Column(Text, nullable=True)
+
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_task_slide_user", "slide_id", "user_id"),
+        Index("idx_task_state", "state"),
+    )
+
+    # Relationships
+    slide = relationship("Slide", back_populates="tasks")
+    user = relationship("User", back_populates="tasks")
 
 
 # Initialize database tables
@@ -386,3 +431,145 @@ def get_model(model_id: int) -> dict:
         if model:
             return model_to_dict(model)
         return {}
+
+
+# Task operations
+def get_task_by_id(task_id: int, user_id: int) -> dict | None:
+    """
+    Get a task by its internal ID, ensuring user owns the slide.
+    """
+    with session_scope() as s:
+        task = (
+            s.query(InferenceTask)
+            .join(Slide)
+            .filter(InferenceTask.id == task_id, Slide.owner_id == user_id)
+            .first()
+        )
+        if task:
+            return model_to_dict(task)
+        return None
+
+
+def update_task(task_id: int, user_id: int, **fields_to_update) -> dict | None:
+    """
+    Update a task by its internal ID, ensuring user owns the slide.
+    """
+    with session_scope() as s:
+        task = (
+            s.query(InferenceTask)
+            .join(Slide)
+            .filter(
+                InferenceTask.id == task_id,
+                Slide.owner_id == user_id
+            )
+            .first()
+        )
+        if not task:
+            return None
+
+        for key, value in fields_to_update.items():
+            if hasattr(task, key):
+                setattr(task, key, value)
+
+        s.flush()
+        return model_to_dict(task)
+
+
+def update_task_by_inference_task_id(
+    inference_task_id: str, **fields_to_update
+) -> dict | None:
+    """
+    Update a task by its inference_task_id.
+    Used by webhook callbacks and status updates.
+    """
+    with session_scope() as s:
+        task = (
+            s.query(InferenceTask)
+            .filter_by(inference_task_id=inference_task_id)
+            .first()
+        )
+        if not task:
+            return None
+
+        for key, value in fields_to_update.items():
+            if hasattr(task, key):
+                setattr(task, key, value)
+
+        s.flush()
+        return model_to_dict(task)
+
+
+def get_tasks(user_id: int, state: str = None, limit: int = constants.Defaults.TASK_LIMIT, offset: int = constants.Defaults.TASK_OFFSET) -> list:
+    """
+    Get all tasks for a user with optional filtering.
+    """
+    with session_scope() as s:
+        query = (
+            s.query(InferenceTask)
+            .join(Slide)
+            .filter(Slide.owner_id == user_id)
+        )
+        
+        # Apply state filter if provided
+        if state:
+            query = query.filter(InferenceTask.state == state)
+        
+        # Order by most recent first
+        query = query.order_by(InferenceTask.created_at.desc())
+        
+        # Apply pagination
+        query = query.limit(limit).offset(offset)
+        
+        tasks = query.all()
+        return [model_to_dict(task) for task in tasks]
+
+
+def get_tasks_by_slide(slide_id: int, user_id: int) -> list:
+    """
+    Get all tasks for a specific slide, ensuring user owns the slide.
+    Returns empty list if slide not found or not owned.
+    """
+    with session_scope() as s:
+        tasks = (
+            s.query(InferenceTask)
+            .join(Slide)
+            .filter(
+                InferenceTask.slide_id == slide_id,
+                Slide.owner_id == user_id
+            )
+            .order_by(InferenceTask.created_at.desc())
+            .all()
+        )
+        return [model_to_dict(task) for task in tasks]
+
+
+def create_task(
+    slide_id: int,
+    user_id: int,
+    inference_task_id: str,
+    state: str = constants.TaskState.PENDING,
+    confidence: float = constants.Defaults.CONFIDENCE,
+    message: str = None,
+) -> dict | None:
+    """
+    Create a new inference task.
+    Returns the task dict or None if slide not found/not owned.
+    """
+    with session_scope() as s:
+        # Verify slide exists and is owned by user
+        slide = s.query(Slide).filter_by(id=slide_id, owner_id=user_id).first()
+        if not slide:
+            return None
+
+        task = InferenceTask(
+            inference_task_id=inference_task_id,
+            slide_id=slide_id,
+            user_id=user_id,
+            state=state,
+            confidence=confidence,
+            message=message,
+            created_at=sys_utils.get_current_time(milliseconds=False),
+        )
+        s.add(task)
+        s.flush()
+        return model_to_dict(task)

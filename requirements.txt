@@ -5,3 +5,4 @@ passlib[bcrypt]
 pydantic-settings
 sqlalchemy
 psycopg2-binary
+httpx
