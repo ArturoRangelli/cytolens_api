@@ -2,7 +2,9 @@ import hashlib
 import secrets
 from typing import Optional, Tuple
 
-from utils import jwt_utils, password_utils, postgres_utils
+from utils import jwt_utils, logging_utils, password_utils, postgres_utils
+
+logger = logging_utils.get_logger("cytolens.services.auth")
 
 
 async def register_user(username: str, password: str) -> None:
@@ -13,7 +15,8 @@ async def register_user(username: str, password: str) -> None:
         raise ValueError("Username already exists")
 
     hashed_pw = password_utils.get_password_hash(password=password)
-    postgres_utils.set_user(username=username, password_hash=hashed_pw)
+    user = postgres_utils.set_user(username=username, password_hash=hashed_pw)
+    logger.info(f"User registered: {username} (ID: {user['id']})")
 
 
 async def login_user(username: str, password: str) -> Tuple[str, str]:
@@ -29,7 +32,8 @@ async def login_user(username: str, password: str) -> Tuple[str, str]:
 
     access_token = jwt_utils.create_access_token(identity=username)
     csrf_token = jwt_utils.get_csrf_token(access_token=access_token)
-
+    logger.info(f"User login: {username} (ID: {user['id']})")
+    
     return access_token, csrf_token
 
 
@@ -60,5 +64,7 @@ async def create_api_key(
         name=name,
         expires_at=expires_at,
     )
-
+    
+    logger.info(f"API key '{name}' created for user {username} (ID: {user['id']})")
+    
     return raw_key

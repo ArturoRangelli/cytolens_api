@@ -1,9 +1,10 @@
 import os
 from typing import Dict
 
-from api.schemas.viewer import PredictionsResponse
 from core import config
-from utils import postgres_utils, slide_utils
+from utils import aws_utils, logging_utils, postgres_utils, slide_utils
+
+logger = logging_utils.get_logger("cytolens.services.viewer")
 
 
 async def create_dzi(slide_id: int, user_id: int) -> str:
@@ -30,6 +31,8 @@ async def create_dzi(slide_id: int, user_id: int) -> str:
         f'    <Size Width="{full_width}" Height="{full_height}"/>\n'
         "</Image>"
     )
+
+    logger.debug(f"DZI created for slide {slide_id} by user ID: {user_id}")
     return xml
 
 
@@ -78,26 +81,22 @@ async def get_predictions(slide_id: int, user_id: int) -> Dict:
         raise ValueError(f"Slide {slide_id} not found")
 
     pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
-    
+
     # Download from S3 if not local
     if not os.path.exists(pkl_path):
         s3_key = f"{config.settings.s3_results_folder}/{slide_id}.pkl"
         os.makedirs(config.settings.prediction_dir, exist_ok=True)
-        
-        from utils import aws_utils
-        
+
         # Check if file exists in S3
-        if not aws_utils.file_exists(
-            bucket=config.settings.s3_bucket_name,
-            key=s3_key
-        ):
+        if not aws_utils.file_exists(bucket=config.settings.s3_bucket_name, key=s3_key):
             raise ValueError(f"Predictions not found for slide {slide_id}")
-        
+
         # Download from S3
         aws_utils.download_file(
-            bucket=config.settings.s3_bucket_name,
-            key=s3_key,
-            local_path=pkl_path
+            bucket=config.settings.s3_bucket_name, key=s3_key, local_path=pkl_path
+        )
+        logger.info(
+            f"Predictions downloaded from S3 for slide {slide_id} by user ID: {user_id}"
         )
 
     ext = slide_db["type"]
@@ -126,6 +125,10 @@ async def get_predictions(slide_id: int, user_id: int) -> Dict:
                 },
             }
         )
+
+    logger.debug(
+        f"Predictions retrieved for slide {slide_id} by user ID: {user_id}, segments: {len(segments)}"
+    )
 
     return {
         "segments": segments,

@@ -1,8 +1,40 @@
-fastapi
-uvicorn
-python-jose[cryptography]
-passlib[bcrypt]
-pydantic-settings
-sqlalchemy
-psycopg2-binary
-httpx
+# Core Web Framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.2.0
+cryptography==43.0.0
+
+# Database
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.10
+
+# Data Validation & Settings
+pydantic==2.10.3
+pydantic-settings==2.6.1
+python-dotenv==1.0.1
+
+# HTTP Client
+httpx==0.27.2
+
+# AWS Services
+boto3==1.35.63
+botocore==1.35.63
+
+# AI/ML Services
+openai==1.56.0
+
+# Image Processing & GPU Acceleration
+cucim-cu12  # GPU-accelerated WSI processing
+cupy-cuda12x==13.3.0
+cachetools==5.5.0
+pynvjpeg==0.0.13  # NVIDIA JPEG decoder
+
+# Utility Libraries
+typing-extensions==4.12.2
+annotated-types==0.7.0
+python-dateutil==2.9.0

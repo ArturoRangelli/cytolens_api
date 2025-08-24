@@ -1,9 +1,7 @@
 from contextlib import contextmanager
 
 from sqlalchemy import (
-    Boolean,
     Column,
-    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -458,10 +456,7 @@ def update_task(task_id: int, user_id: int, **fields_to_update) -> dict | None:
         task = (
             s.query(InferenceTask)
             .join(Slide)
-            .filter(
-                InferenceTask.id == task_id,
-                Slide.owner_id == user_id
-            )
+            .filter(InferenceTask.id == task_id, Slide.owner_id == user_id)
             .first()
         )
         if not task:
@@ -499,27 +494,28 @@ def update_task_by_inference_task_id(
         return model_to_dict(task)
 
 
-def get_tasks(user_id: int, state: str = None, limit: int = constants.Defaults.TASK_LIMIT, offset: int = constants.Defaults.TASK_OFFSET) -> list:
+def get_tasks(
+    user_id: int,
+    state: str = None,
+    limit: int = constants.Defaults.TASK_LIMIT,
+    offset: int = constants.Defaults.TASK_OFFSET,
+) -> list:
     """
     Get all tasks for a user with optional filtering.
     """
     with session_scope() as s:
-        query = (
-            s.query(InferenceTask)
-            .join(Slide)
-            .filter(Slide.owner_id == user_id)
-        )
-        
+        query = s.query(InferenceTask).join(Slide).filter(Slide.owner_id == user_id)
+
         # Apply state filter if provided
         if state:
             query = query.filter(InferenceTask.state == state)
-        
+
         # Order by most recent first
         query = query.order_by(InferenceTask.created_at.desc())
-        
+
         # Apply pagination
         query = query.limit(limit).offset(offset)
-        
+
         tasks = query.all()
         return [model_to_dict(task) for task in tasks]
 
@@ -533,10 +529,7 @@ def get_tasks_by_slide(slide_id: int, user_id: int) -> list:
         tasks = (
             s.query(InferenceTask)
             .join(Slide)
-            .filter(
-                InferenceTask.slide_id == slide_id,
-                Slide.owner_id == user_id
-            )
+            .filter(InferenceTask.slide_id == slide_id, Slide.owner_id == user_id)
             .order_by(InferenceTask.created_at.desc())
             .all()
         )

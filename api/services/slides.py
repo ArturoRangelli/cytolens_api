@@ -3,7 +3,9 @@ import os
 from typing import Dict, List, Optional
 
 from core import config, constants
-from utils import aws_utils, postgres_utils, sys_utils
+from utils import aws_utils, logging_utils, postgres_utils, sys_utils
+
+logger = logging_utils.get_logger("cytolens.services.slides")
 
 
 async def get_slides(user_id: int) -> List[dict]:
@@ -11,15 +13,21 @@ async def get_slides(user_id: int) -> List[dict]:
     Get all slides for a specific user.
     """
     slides = postgres_utils.get_slides(owner_id=user_id)
+    logger.debug(f"Slides retrieved: {len(slides)} slides for user ID: {user_id}")
     return slides
 
 
-async def get_slide(slide_id: int, user_id: int) -> Optional[Dict]:
+async def get_slide(slide_id: int, user_id: int) -> Dict:
     """
     Get a single slide by ID for a specific user.
-    Returns None if slide doesn't exist or user doesn't own it.
+    Raises ValueError if slide doesn't exist or user doesn't own it.
     """
     slide = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
+
+    if not slide:
+        raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
+
+    logger.debug(f"Slide retrieved: ID {slide_id} for user ID: {user_id}")
     return slide
 
 
@@ -30,6 +38,10 @@ async def get_slide_tasks(slide_id: int, user_id: int) -> List[Dict]:
     """
     # Get tasks - ownership is verified in the query via join
     tasks = postgres_utils.get_tasks_by_slide(slide_id=slide_id, user_id=user_id)
+
+    logger.debug(
+        f"Tasks retrieved: {len(tasks)} tasks for slide {slide_id}, user ID: {user_id}"
+    )
 
     # Format tasks for response
     return [
@@ -64,6 +76,9 @@ async def start_upload(name: str, file_size: int, user_id: int) -> Dict:
     # Start multipart upload
     upload_id = aws_utils.create_multipart_upload(
         bucket=config.settings.s3_bucket_name, key=s3_key
+    )
+    logger.info(
+        f"Upload started for slide '{name}' by user ID: {user_id}, upload_id: {upload_id}"
     )
 
     # Calculate number of parts (100MB per part)
@@ -154,6 +169,10 @@ async def finish_upload(
         bucket=config.settings.s3_bucket_name, key=permanent_key, local_path=local_path
     )
 
+    logger.info(
+        f"Slide uploaded successfully: '{name}' (ID: {slide['id']}) by user ID: {user_id}"
+    )
+
     return {"slide_id": slide["id"], "status": "ready"}
 
 
@@ -164,6 +183,7 @@ async def cancel_upload(upload_id: str, s3_key: str) -> Dict:
     aws_utils.abort_multipart_upload(
         bucket=config.settings.s3_bucket_name, key=s3_key, upload_id=upload_id
     )
+    logger.info(f"Upload cancelled: upload_id {upload_id}")
     return {"status": "aborted"}
 
 
@@ -201,6 +221,8 @@ async def delete_slide(slide_id: int, user_id: int) -> Dict:
 
     # Step 6: Delete from database
     postgres_utils.delete_slide(slide_id=slide_id, owner_id=user_id)
+
+    logger.info(f"Slide deleted: ID {slide_id} by user ID: {user_id}")
 
     # Step 7: Return success message
     return {"message": f"Slide {slide_id} deleted successfully"}
@@ -246,6 +268,15 @@ async def bulk_delete_slides(slide_ids: List[int], user_id: int) -> Dict:
         postgres_utils.delete_slide(slide_id=slide_id, owner_id=user_id)
         deleted_ids.append(slide_id)
 
+    if deleted_ids:
+        logger.info(
+            f"Bulk delete: {len(deleted_ids)} slides deleted by user ID: {user_id}, IDs: {deleted_ids}"
+        )
+    if failed_ids:
+        logger.warning(
+            f"Bulk delete: {len(failed_ids)} slides failed for user ID: {user_id}, IDs: {failed_ids}"
+        )
+
     return {
         "message": f"Bulk delete completed. {len(deleted_ids)} slides deleted.",
         "deleted_count": len(deleted_ids),
@@ -281,5 +312,9 @@ async def update_slide(slide_id: int, name: str, user_id: int) -> Dict:
 
     if not updated_slide:
         raise ValueError(constants.ErrorMessage.UPDATE_FAILED)
+
+    logger.info(
+        f"Slide updated: ID {slide_id} renamed to '{name}' by user ID: {user_id}"
+    )
 
     return {"message": f"Slide {slide_id} updated successfully", "slide": updated_slide}

@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     inference_service_url: str = "http://localhost:8000"  # URL of inference service
     inference_api_key: str = ""  # API key for inference service
 
+    # Logging Settings
+    log_dir: str = "/tmp/cytolens/api_logs"
+    log_level: str = "INFO"
+    log_rotation_interval: str = "midnight"  # daily rotation at midnight
+    log_rotation_count: int = 30  # keep 30 days of logs
+    log_max_bytes: int = 10 * 1024 * 1024  # 10MB for error log
+    log_backup_count: int = 5  # keep 5 backup files for error log
+
     @property
     def postgres_host(self) -> str:
         """Database host based on environment"""

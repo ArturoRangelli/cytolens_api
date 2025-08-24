@@ -3,7 +3,9 @@ from typing import Any, Dict, List
 import httpx
 
 from core import config, constants
-from utils import postgres_utils
+from utils import logging_utils, postgres_utils
+
+logger = logging_utils.get_logger("cytolens.services.inference")
 
 
 async def start_inference(
@@ -31,6 +33,10 @@ async def start_inference(
     }
 
     # Call inference service
+    logger.info(
+        f"Starting inference for slide {slide_id} by user ID: {user_id}, confidence: {confidence}"
+    )
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{config.settings.inference_service_url}/inference",
@@ -49,6 +55,10 @@ async def start_inference(
             state=data["state"],
             confidence=confidence,
             message=constants.TaskMessage.QUEUED,
+        )
+
+        logger.info(
+            f"Inference task created: ID {task['id']} for slide {slide_id} by user ID: {user_id}"
         )
 
         # Return in format expected by our schema
@@ -74,6 +84,10 @@ async def get_tasks(
 
     tasks = postgres_utils.get_tasks(
         user_id=user_id, state=state, limit=limit, offset=offset
+    )
+
+    logger.debug(
+        f"Tasks retrieved: {len(tasks)} tasks for user ID: {user_id}, filter: {state or 'all'}"
     )
 
     # Format tasks for response
@@ -105,6 +119,10 @@ async def get_task_status(task_id: str, user_id: int) -> Dict[str, Any]:
     task = postgres_utils.get_task_by_id(task_id=task_id_int, user_id=user_id)
     if not task:
         raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
+
+    logger.debug(
+        f"Task status checked: ID {task_id_int} (state: {task['state']}) by user ID: {user_id}"
+    )
 
     # Return in format expected by our schema
     return {
@@ -162,6 +180,10 @@ async def cancel_task(task_id: str, user_id: int) -> Dict[str, Any]:
         message=constants.TaskMessage.CANCELLED,
     )
 
+    logger.info(
+        f"Task cancelled: ID {task_id_int} for slide {task['slide_id']} by user ID: {user_id}"
+    )
+
     return {
         "id": str(task["id"]),
         "state": data["state"],  # Return what the inference service sent
@@ -198,6 +220,8 @@ async def handle_webhook_callback(
 
     if not updated:
         raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
+
+    logger.info(f"Webhook received: task {inference_task_id} updated to {state}")
 
     return {
         "inference_task_id": inference_task_id,

@@ -6,7 +6,7 @@ Professional structure for WSI inference service
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError
 from pydantic import ValidationError
@@ -17,8 +17,7 @@ from api.routes import inference as inference_routes
 from api.routes import slides as slides_routes
 from api.routes import viewer as viewer_routes
 from core import config
-
-# from utils import logging_utils
+from utils import logging_utils
 
 
 @asynccontextmanager
@@ -26,17 +25,17 @@ async def lifespan(app: FastAPI):
     """
     Manage application lifecycle
     """
-    # # Setup logging first
-    # logging_utils.setup_logging()
-    # logger = logging_utils.get_logger(name="cytolens.main")
+    # Setup logging first
+    logging_utils.setup_logging()
+    logger = logging_utils.get_logger(name="cytolens.main")
 
-    # # Startup - Download model files if needed
-    # logger.info("Starting CytoLens Inference Service")
+    # Startup
+    logger.info("Starting CytoLens Inference Service")
 
     yield
 
     # Shutdown
-    # logger.info("Shutting down CytoLens Inference Service")
+    logger.info("Shutting down CytoLens Inference Service")
 
 
 # Create FastAPI app
@@ -55,6 +54,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Health check endpoint
+@app.get("/health", include_in_schema=False)
+async def health_check():
+    """Health check endpoint for container orchestration"""
+    return {"status": "healthy", "service": config.settings.app_name}
+
 
 # Include routers
 app.include_router(auth_routes.router)
