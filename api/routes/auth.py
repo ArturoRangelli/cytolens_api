@@ -1,4 +1,14 @@
-from fastapi import APIRouter, Response, Depends
+"""
+Copyright (c) 2025 Binary Core LLC. All rights reserved.
+
+This file is part of CytoLens, a proprietary product of Binary Core LLC.
+Unauthorized copying, modification, or distribution of this file,
+via any medium, is strictly prohibited.
+
+Authentication routes for user registration, login, and API key management
+"""
+
+from fastapi import APIRouter, Depends, Response
 
 from api.schemas import auth as auth_schemas
 from api.services import auth as auth_services
@@ -38,7 +48,7 @@ async def login_endpoint(
         username=request.username,
         password=request.password,
     )
-    
+
     # Set access token cookie (httponly for security)
     response.set_cookie(
         key="access_token",
@@ -47,7 +57,7 @@ async def login_endpoint(
         samesite="lax",
         secure=False,  # Set to True in production with HTTPS
     )
-    
+
     # Set CSRF token cookie (not httponly so JS can read it)
     response.set_cookie(
         key="csrf_access_token",
@@ -56,7 +66,7 @@ async def login_endpoint(
         samesite="lax",
         secure=False,  # Set to True in production with HTTPS
     )
-    
+
     return auth_schemas.LoginResponse(message="Login successful")
 
 
@@ -78,7 +88,7 @@ async def logout_endpoint(
         samesite="lax",
         secure=False,  # Set to True in production with HTTPS
     )
-    
+
     response.set_cookie(
         key="csrf_access_token",
         value="",
@@ -87,11 +97,13 @@ async def logout_endpoint(
         samesite="lax",
         secure=False,  # Set to True in production with HTTPS
     )
-    
+
     return auth_schemas.LogoutResponse(message="Logout successful")
 
 
-@router.post("/api-keys", response_model=auth_schemas.CreateApiKeyResponse, status_code=201)
+@router.post(
+    "/api-keys", response_model=auth_schemas.CreateApiKeyResponse, status_code=201
+)
 async def create_api_key_endpoint(
     request: auth_schemas.CreateApiKeyRequest,
     current_user: str = Depends(jwt_utils.get_current_user),

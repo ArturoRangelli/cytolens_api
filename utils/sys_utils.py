@@ -1,3 +1,13 @@
+"""
+Copyright (c) 2025 Binary Core LLC. All rights reserved.
+
+This file is part of CytoLens, a proprietary product of Binary Core LLC.
+Unauthorized copying, modification, or distribution of this file,
+via any medium, is strictly prohibited.
+
+System utilities for file operations and time management
+"""
+
 import os
 from datetime import datetime
 

@@ -1,3 +1,13 @@
+"""
+Copyright (c) 2025 Binary Core LLC. All rights reserved.
+
+This file is part of CytoLens, a proprietary product of Binary Core LLC.
+Unauthorized copying, modification, or distribution of this file,
+via any medium, is strictly prohibited.
+
+AWS utilities for S3 operations
+"""
+
 import boto3
 from boto3 import resource
 from boto3.s3.transfer import TransferConfig
@@ -11,7 +21,7 @@ s3_client = boto3.client(
     "s3",
     aws_access_key_id=config.settings.aws_access_key_id,
     aws_secret_access_key=config.settings.aws_secret_access_key,
-    config=Config(signature_version="s3v4")
+    config=Config(signature_version="s3v4"),
 )
 
 
@@ -67,12 +77,9 @@ def download_file(bucket: str, key: str, local_path: str) -> None:
         multipart_chunksize=64 * 1024**2,  # Each part = 64 MB
         max_concurrency=10,  # Number of threads
     )
-    
+
     s3_client.download_file(
-        Bucket=bucket,
-        Key=key,
-        Filename=local_path,
-        Config=transfer_config
+        Bucket=bucket, Key=key, Filename=local_path, Config=transfer_config
     )
 
 
@@ -80,11 +87,8 @@ def create_multipart_upload(bucket: str, key: str) -> str:
     """
     Initialize a multipart upload and return the upload ID.
     """
-    response = s3_client.create_multipart_upload(
-        Bucket=bucket,
-        Key=key
-    )
-    return response['UploadId']
+    response = s3_client.create_multipart_upload(Bucket=bucket, Key=key)
+    return response["UploadId"]
 
 
 def generate_multipart_presigned_url(
@@ -94,26 +98,25 @@ def generate_multipart_presigned_url(
     Generate a presigned URL for uploading a part in multipart upload.
     """
     return s3_client.generate_presigned_url(
-        ClientMethod='upload_part',
+        ClientMethod="upload_part",
         Params={
-            'Bucket': bucket,
-            'Key': key,
-            'UploadId': upload_id,
-            'PartNumber': part_number
+            "Bucket": bucket,
+            "Key": key,
+            "UploadId": upload_id,
+            "PartNumber": part_number,
         },
-        ExpiresIn=expiry
+        ExpiresIn=expiry,
     )
 
 
-def complete_multipart_upload(bucket: str, key: str, upload_id: str, parts: list) -> None:
+def complete_multipart_upload(
+    bucket: str, key: str, upload_id: str, parts: list
+) -> None:
     """
     Complete a multipart upload with the provided parts.
     """
     s3_client.complete_multipart_upload(
-        Bucket=bucket,
-        Key=key,
-        UploadId=upload_id,
-        MultipartUpload={'Parts': parts}
+        Bucket=bucket, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}
     )
 
 
@@ -122,10 +125,6 @@ def abort_multipart_upload(bucket: str, key: str, upload_id: str) -> None:
     Abort a multipart upload.
     """
     try:
-        s3_client.abort_multipart_upload(
-            Bucket=bucket,
-            Key=key,
-            UploadId=upload_id
-        )
+        s3_client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
     except ClientError:
         pass  # Already aborted or doesn't exist

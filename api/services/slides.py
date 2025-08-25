@@ -1,6 +1,16 @@
+"""
+Copyright (c) 2025 Binary Core LLC. All rights reserved.
+
+This file is part of CytoLens, a proprietary product of Binary Core LLC.
+Unauthorized copying, modification, or distribution of this file,
+via any medium, is strictly prohibited.
+
+Slide management services for upload, download, and deletion
+"""
+
 import math
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from core import config, constants
 from utils import aws_utils, logging_utils, postgres_utils, sys_utils

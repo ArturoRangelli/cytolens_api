@@ -1,3 +1,13 @@
+"""
+Copyright (c) 2025 Binary Core LLC. All rights reserved.
+
+This file is part of CytoLens, a proprietary product of Binary Core LLC.
+Unauthorized copying, modification, or distribution of this file,
+via any medium, is strictly prohibited.
+
+Slide management routes for upload, download, and deletion
+"""
+
 from typing import Dict, List
 
 from fastapi import APIRouter, Depends
@@ -57,7 +67,9 @@ async def get_slide(
     return GetSlideResponse(slide=slide)
 
 
-@router.get("/{slide_id}/tasks", response_model=List[inference_schemas.TaskStatusResponse])
+@router.get(
+    "/{slide_id}/tasks", response_model=List[inference_schemas.TaskStatusResponse]
+)
 async def get_slide_tasks(
     slide_id: int,
     current_user: Dict = Depends(verify_user_access),
@@ -67,10 +79,9 @@ async def get_slide_tasks(
     Returns empty list if slide not found or user doesn't own it.
     """
     tasks = await slides_service.get_slide_tasks(
-        slide_id=slide_id, 
-        user_id=current_user["id"]
+        slide_id=slide_id, user_id=current_user["id"]
     )
-    
+
     return [
         inference_schemas.TaskStatusResponse(
             id=task["id"],
@@ -106,7 +117,7 @@ async def start_upload(
         file_id=result["file_id"],
         part_size=result["part_size"],
         num_parts=result["num_parts"],
-        presigned_urls=result["presigned_urls"]
+        presigned_urls=result["presigned_urls"],
     )
 
 
@@ -129,10 +140,7 @@ async def finish_upload(
         user_id=current_user["id"],
     )
 
-    return FinishUploadResponse(
-        slide_id=result["slide_id"],
-        status=result["status"]
-    )
+    return FinishUploadResponse(slide_id=result["slide_id"], status=result["status"])
 
 
 @router.post("/upload/cancel", response_model=CancelUploadResponse)
@@ -146,10 +154,9 @@ async def cancel_upload(
     Requires authentication via API key or JWT token.
     """
     result = await slides_service.cancel_upload(
-        upload_id=request.upload_id,
-        s3_key=request.s3_key
+        upload_id=request.upload_id, s3_key=request.s3_key
     )
-    
+
     return CancelUploadResponse(status=result["status"])
 
 
@@ -164,10 +171,9 @@ async def delete_slide(
     Requires authentication and ownership of the slide.
     """
     result = await slides_service.delete_slide(
-        slide_id=slide_id,
-        user_id=current_user["id"]
+        slide_id=slide_id, user_id=current_user["id"]
     )
-    
+
     return DeleteSlideResponse(message=result["message"])
 
 
@@ -183,15 +189,10 @@ async def update_slide(
     Validates name uniqueness for the user.
     """
     result = await slides_service.update_slide(
-        slide_id=slide_id,
-        name=request.name,
-        user_id=current_user["id"]
+        slide_id=slide_id, name=request.name, user_id=current_user["id"]
     )
-    
-    return UpdateSlideResponse(
-        message=result["message"],
-        slide=result["slide"]
-    )
+
+    return UpdateSlideResponse(message=result["message"], slide=result["slide"])
 
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)
@@ -206,13 +207,12 @@ async def bulk_delete_slides(
     Maximum 100 slides per request.
     """
     result = await slides_service.bulk_delete_slides(
-        slide_ids=request.slide_ids,
-        user_id=current_user["id"]
+        slide_ids=request.slide_ids, user_id=current_user["id"]
     )
-    
+
     return BulkDeleteResponse(
         message=result["message"],
         deleted_count=result["deleted_count"],
         deleted_ids=result["deleted_ids"],
-        failed_ids=result["failed_ids"]
+        failed_ids=result["failed_ids"],
     )

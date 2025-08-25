@@ -1,8 +1,19 @@
+"""
+Copyright (c) 2025 Binary Core LLC. All rights reserved.
+
+This file is part of CytoLens, a proprietary product of Binary Core LLC.
+Unauthorized copying, modification, or distribution of this file,
+via any medium, is strictly prohibited.
+
+Password utilities for hashing and verification
+"""
+
 import logging
+
 from passlib.context import CryptContext
 
 # Suppress passlib's bcrypt version detection warning
-logging.getLogger('passlib').setLevel(logging.ERROR)
+logging.getLogger("passlib").setLevel(logging.ERROR)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

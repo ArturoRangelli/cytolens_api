@@ -1,3 +1,13 @@
+"""
+Copyright (c) 2025 Binary Core LLC. All rights reserved.
+
+This file is part of CytoLens, a proprietary product of Binary Core LLC.
+Unauthorized copying, modification, or distribution of this file,
+via any medium, is strictly prohibited.
+
+Authentication services for user registration, login, and API key management
+"""
+
 import hashlib
 import secrets
 from typing import Optional, Tuple
@@ -33,7 +43,7 @@ async def login_user(username: str, password: str) -> Tuple[str, str]:
     access_token = jwt_utils.create_access_token(identity=username)
     csrf_token = jwt_utils.get_csrf_token(access_token=access_token)
     logger.info(f"User login: {username} (ID: {user['id']})")
-    
+
     return access_token, csrf_token
 
 
@@ -54,7 +64,7 @@ async def create_api_key(
     # Check if API key name already exists for this user
     if postgres_utils.get_apikey_by_name(user_id=user["id"], name=name):
         raise ValueError(f"API key with name '{name}' already exists for this user")
-    
+
     raw_key = secrets.token_urlsafe(32)
     hashed_key = hashlib.sha256(raw_key.encode()).hexdigest()
 
@@ -64,7 +74,7 @@ async def create_api_key(
         name=name,
         expires_at=expires_at,
     )
-    
+
     logger.info(f"API key '{name}' created for user {username} (ID: {user['id']})")
-    
+
     return raw_key

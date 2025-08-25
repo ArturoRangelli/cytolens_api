@@ -1,3 +1,13 @@
+"""
+Copyright (c) 2025 Binary Core LLC. All rights reserved.
+
+This file is part of CytoLens, a proprietary product of Binary Core LLC.
+Unauthorized copying, modification, or distribution of this file,
+via any medium, is strictly prohibited.
+
+Viewer routes for Deep Zoom tile serving and predictions
+"""
+
 from typing import Dict
 
 from fastapi import APIRouter, Depends, Response
@@ -56,8 +66,7 @@ async def get_tile(
 
 @router.get("/predictions/{slide_id}", response_model=PredictionsResponse)
 async def get_predictions(
-    slide_id: int, 
-    current_user: Dict = Depends(verify_user_access)
+    slide_id: int, current_user: Dict = Depends(verify_user_access)
 ) -> PredictionsResponse:
     """
     Get inference predictions for a slide.
@@ -65,12 +74,11 @@ async def get_predictions(
     Requires authentication and slide ownership.
     """
     predictions = await viewer_service.get_predictions(
-        slide_id=slide_id,
-        user_id=current_user["id"]
+        slide_id=slide_id, user_id=current_user["id"]
     )
-    
+
     return PredictionsResponse(
         segments=predictions["segments"],
         wsi_dimensions=predictions["wsi_dimensions"],
-        classes=predictions["classes"]
+        classes=predictions["classes"],
     )

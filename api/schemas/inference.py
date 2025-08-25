@@ -1,4 +1,14 @@
-from typing import Dict, List, Optional
+"""
+Copyright (c) 2025 Binary Core LLC. All rights reserved.
+
+This file is part of CytoLens, a proprietary product of Binary Core LLC.
+Unauthorized copying, modification, or distribution of this file,
+via any medium, is strictly prohibited.
+
+Inference schemas for AI analysis task management
+"""
+
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -10,7 +20,10 @@ class InferenceRequest(BaseModel):
 
     slide_id: int = Field(..., description="ID of the slide to process")
     confidence: float = Field(
-        default=constants.Defaults.CONFIDENCE, ge=0.0, le=0.9, description="Confidence threshold for predictions"
+        default=constants.Defaults.CONFIDENCE,
+        ge=0.0,
+        le=0.9,
+        description="Confidence threshold for predictions",
     )
 
 
