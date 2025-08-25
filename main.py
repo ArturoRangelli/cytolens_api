@@ -30,12 +30,12 @@ async def lifespan(app: FastAPI):
     logger = logging_utils.get_logger(name="cytolens.main")
 
     # Startup
-    logger.info("Starting CytoLens Inference Service")
+    logger.info("Starting CytoLens API Service")
 
     yield
 
     # Shutdown
-    logger.info("Shutting down CytoLens Inference Service")
+    logger.info("Shutting down CytoLens API Service")
 
 
 # Create FastAPI app
