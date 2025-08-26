@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 import httpx
 
 from core import config, constants
-from utils import logging_utils, postgres_utils
+from utils import logging_utils, postgres_utils, sys_utils
 
 logger = logging_utils.get_logger("cytolens.services.inference")
 
@@ -188,6 +188,7 @@ async def cancel_task(task_id: str, user_id: int) -> Dict[str, Any]:
         user_id=user_id,
         state=data["state"],  # Will be "REVOKED" from the inference service
         message=constants.TaskMessage.CANCELLED,
+        completed_at=sys_utils.get_current_time(milliseconds=False),
     )
 
     logger.info(
