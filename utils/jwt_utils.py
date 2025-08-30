@@ -22,8 +22,8 @@ def create_access_token(identity: str) -> str:
     """
     Create a short-lived JWT access token.
 
-    Access tokens are used for API requests and expire quickly (15 minutes).
-    They contain minimal claims for performance.
+    HIPAA: Access tokens expire in 5 minutes for enhanced security.
+    Short-lived tokens minimize risk if compromised.
     """
     now = datetime.utcnow()
 
@@ -49,9 +49,9 @@ def create_refresh_token(identity: str) -> str:
     """
     Create a refresh token with sliding expiration window.
 
-    Refresh tokens expire after 30 minutes of inactivity.
-    Each refresh resets the inactivity timer - users can stay logged in
-    indefinitely as long as they're active (like banking apps).
+    HIPAA compliance: Refresh tokens expire after 15 minutes of inactivity.
+    Each refresh resets the inactivity timer - active users stay logged in,
+    but inactive users are logged out after 15 minutes.
     """
     now = datetime.utcnow()
 

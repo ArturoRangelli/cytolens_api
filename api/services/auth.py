@@ -53,8 +53,8 @@ async def refresh_tokens(refresh_token: str) -> Tuple[str, str, str]:
     """
     Validate refresh token and issue new token pair.
 
-    Implements sliding window expiration - each refresh resets the 30-minute
-    inactivity timer, allowing users to stay logged in indefinitely while active.
+    HIPAA compliance: Sliding window expiration - each refresh resets the 15-minute
+    inactivity timer. Active users stay logged in, inactive users are logged out.
     """
     if not refresh_token:
         raise ValueError("Refresh token required")
