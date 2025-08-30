@@ -54,7 +54,8 @@ class Settings(BaseSettings):
     # JWT Settings
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 30
+    jwt_access_token_expire_minutes: int = 15  # Access token expiry (15 min)
+    jwt_refresh_token_expire_minutes: int = 30  # Refresh token expiry (30 min inactivity)
 
     # Inference Service Settings
     inference_service_url: str = "http://localhost:8000"  # URL of inference service

@@ -28,6 +28,9 @@ async def start_inference(
     # Verify slide ownership
     slide_db = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
     if not slide_db:
+        logger.warning(
+            f"Unauthorized inference attempt for slide {slide_id} by user {user_id}"
+        )
         raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
 
     # Prepare request matching the inference service schema
@@ -44,7 +47,7 @@ async def start_inference(
 
     # Call inference service
     logger.info(
-        f"Starting inference for slide {slide_id} by user ID: {user_id}, confidence: {confidence}"
+        f"Starting inference for slide {slide_id} by user {user_id} (confidence: {confidence})"
     )
 
     async with httpx.AsyncClient() as client:
@@ -68,7 +71,7 @@ async def start_inference(
         )
 
         logger.info(
-            f"Inference task created: ID {task['id']} for slide {slide_id} by user ID: {user_id}"
+            f"Inference task created: {task['id']} for slide {slide_id} by user {user_id}"
         )
 
         # Return in format expected by our schema
@@ -96,8 +99,8 @@ async def get_tasks(
         user_id=user_id, state=state, limit=limit, offset=offset
     )
 
-    logger.debug(
-        f"Tasks retrieved: {len(tasks)} tasks for user ID: {user_id}, filter: {state or 'all'}"
+    logger.info(
+        f"Tasks retrieved: {len(tasks)} tasks for user {user_id} (filter: {state or 'all'})"
     )
 
     # Format tasks for response
@@ -128,10 +131,13 @@ async def get_task_status(task_id: str, user_id: int) -> Dict[str, Any]:
     # Get task from database, ensuring user owns it
     task = postgres_utils.get_task_by_id(task_id=task_id_int, user_id=user_id)
     if not task:
+        logger.warning(
+            f"Unauthorized task status access attempt for task {task_id_int} by user {user_id}"
+        )
         raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
 
-    logger.debug(
-        f"Task status checked: ID {task_id_int} (state: {task['state']}) by user ID: {user_id}"
+    logger.info(
+        f"Task status checked: {task_id_int} (state: {task['state']}) by user {user_id}"
     )
 
     # Return in format expected by our schema
@@ -159,6 +165,9 @@ async def cancel_task(task_id: str, user_id: int) -> Dict[str, Any]:
     # Verify task ownership
     task = postgres_utils.get_task_by_id(task_id=task_id_int, user_id=user_id)
     if not task:
+        logger.warning(
+            f"Unauthorized task cancel attempt for task {task_id_int} by user {user_id}"
+        )
         raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
 
     # Check if task is already in terminal state to avoid unnecessary API call
@@ -188,11 +197,11 @@ async def cancel_task(task_id: str, user_id: int) -> Dict[str, Any]:
         user_id=user_id,
         state=data["state"],  # Will be "REVOKED" from the inference service
         message=constants.TaskMessage.CANCELLED,
-        completed_at=sys_utils.get_current_time(milliseconds=False),
+        completed_at=sys_utils.get_utc_timestamp(),
     )
 
     logger.info(
-        f"Task cancelled: ID {task_id_int} for slide {task['slide_id']} by user ID: {user_id}"
+        f"Task cancelled: {task_id_int} for slide {task['slide_id']} by user {user_id}"
     )
 
     return {
@@ -219,14 +228,18 @@ async def handle_webhook_callback(
 
     # Verify the request is from inference service
     if api_key != config.settings.inference_api_key:
+        logger.warning(f"Unauthorized webhook attempt with invalid API key")
         raise ValueError(constants.ErrorMessage.UNAUTHORIZED)
+
+    # Convert webhook timestamp to ISO format for consistency
+    iso_timestamp = sys_utils.get_utc_timestamp()
 
     # Update task status
     updated = postgres_utils.update_task_by_inference_task_id(
         inference_task_id=inference_task_id,
         state=state,
         message=message,
-        completed_at=timestamp,
+        completed_at=iso_timestamp,
     )
 
     if not updated:
@@ -238,5 +251,5 @@ async def handle_webhook_callback(
         "inference_task_id": inference_task_id,
         "state": state,
         "message": constants.TaskMessage.STATUS_UPDATED,
-        "received_at": timestamp,
+        "received_at": iso_timestamp,
     }

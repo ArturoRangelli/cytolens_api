@@ -19,15 +19,24 @@ from core import config
 
 
 def create_access_token(identity: str) -> str:
-    """Create a JWT access token with embedded CSRF token."""
-    expires_delta = timedelta(minutes=config.settings.jwt_access_token_expire_minutes)
-    expire = datetime.utcnow() + expires_delta
-    csrf_token = secrets.token_urlsafe(32)
+    """
+    Create a short-lived JWT access token.
+
+    Access tokens are used for API requests and expire quickly (15 minutes).
+    They contain minimal claims for performance.
+    """
+    now = datetime.utcnow()
+
+    # Short expiration for access tokens
+    expire = now + timedelta(minutes=config.settings.jwt_access_token_expire_minutes)
+
     to_encode = {
         "sub": identity,
         "exp": expire,
-        "csrf": csrf_token,  # Embed CSRF token in the JWT
+        "iat": now.timestamp(),
+        "type": "access",
     }
+
     encoded_jwt = jwt.encode(
         to_encode,
         config.settings.jwt_secret_key,
@@ -36,17 +45,48 @@ def create_access_token(identity: str) -> str:
     return encoded_jwt
 
 
-def get_csrf_token(access_token: str) -> str:
-    """Extract CSRF token from JWT access token."""
-    payload = jwt.decode(
-        access_token,
+def create_refresh_token(identity: str) -> str:
+    """
+    Create a refresh token with sliding expiration window.
+
+    Refresh tokens expire after 30 minutes of inactivity.
+    Each refresh resets the inactivity timer - users can stay logged in
+    indefinitely as long as they're active (like banking apps).
+    """
+    now = datetime.utcnow()
+
+    # Refresh token expires after inactivity period
+    # Gets renewed with each refresh, so active users never get logged out
+    expire = now + timedelta(minutes=config.settings.jwt_refresh_token_expire_minutes)
+
+    # Generate unique token ID for revocation support
+    token_id = secrets.token_urlsafe(32)
+
+    to_encode = {
+        "sub": identity,
+        "exp": expire,  # Sliding window - resets on each refresh
+        "iat": now.timestamp(),
+        "jti": token_id,  # JWT ID for revocation
+        "type": "refresh",
+    }
+
+    encoded_jwt = jwt.encode(
+        to_encode,
+        config.settings.jwt_secret_key,
+        algorithm=config.settings.jwt_algorithm,
+    )
+    return encoded_jwt
+
+
+def decode_token(token: str) -> dict:
+    """
+    Decode and validate a JWT token.
+    """
+    return jwt.decode(
+        token,
         config.settings.jwt_secret_key,
         algorithms=[config.settings.jwt_algorithm],
     )
-    csrf_token = payload.get("csrf")
-    if not csrf_token:
-        raise ValueError("CSRF token not found in access token")
-    return csrf_token
 
 
 async def get_current_user(access_token: Optional[str] = Cookie(None)) -> str:

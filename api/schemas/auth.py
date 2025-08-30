@@ -53,6 +53,12 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     message: str
+    username: str  # Email of the logged-in user
+
+
+class RefreshResponse(BaseModel):
+    message: str
+    username: str  # Username for frontend state
 
 
 class LogoutResponse(BaseModel):

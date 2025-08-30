@@ -26,6 +26,7 @@ class Slide(BaseModel):
     model_id: int
     original_filename: str
     type: str
+    file_size: int
 
 
 class GetSlidesResponse(BaseModel):

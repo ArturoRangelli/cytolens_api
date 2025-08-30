@@ -52,9 +52,10 @@ app = FastAPI(
 )
 
 # Add CORS middleware
+# Allow http://localhost for development and https://cytolens.ai for production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origin_regex="(http://localhost(:[0-9]+)?|https://(.*\.)?cytolens\.ai)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

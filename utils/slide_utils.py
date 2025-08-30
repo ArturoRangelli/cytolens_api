@@ -8,9 +8,12 @@ via any medium, is strictly prohibited.
 Slide processing utilities for Deep Zoom tile generation
 """
 
+import asyncio
 import math
+import os
 import pickle
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Tuple
 
 import cucim
@@ -20,12 +23,20 @@ from cucim.skimage.transform import resize as cp_resize
 from nvjpeg import NvJpeg
 
 from core import config
+from utils import aws_utils
 
 nj = NvJpeg()
+
+# Thread pool for blocking I/O operations to prevent blocking the event loop
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # Production cache with TTL (5 minutes) and max size
 SLIDE_INFO_CACHE = TTLCache(maxsize=50, ttl=300)
 CACHE_LOCK = threading.Lock()  # Thread-safe access
+
+# Track downloads in progress with asyncio Events for coordination
+_downloads_in_progress = {}  # key -> asyncio.Event
+_downloads_lock = threading.Lock()
 
 
 def _best_slide_level(level_downsamples: List[float], ds_needed: float) -> int:
@@ -58,6 +69,52 @@ def _load_slide_info(
         dz_dims.append((w, h))
 
     return slide, full_width, full_height, level_downsamples, dz_dims
+
+
+def _download_predictions_from_s3(slide_id: int) -> str:
+    """
+    Download predictions from S3 to local storage.
+    This function ONLY handles the download, no checking.
+    """
+    pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
+    s3_key = f"{config.settings.s3_results_folder}/{slide_id}.pkl"
+
+    # Create directory if needed
+    os.makedirs(config.settings.prediction_dir, exist_ok=True)
+
+    # Check if exists in S3
+    if not aws_utils.file_exists(bucket=config.settings.s3_bucket_name, key=s3_key):
+        raise ValueError(f"Predictions not found for slide {slide_id}")
+
+    # Download from S3
+    aws_utils.download_file(
+        bucket=config.settings.s3_bucket_name, key=s3_key, local_path=pkl_path
+    )
+
+    return pkl_path
+
+
+def _download_slide_from_s3(slide_id: int, ext: str) -> str:
+    """
+    Download slide from S3 to local storage.
+    This function ONLY handles the download, no checking.
+    """
+    local_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{ext}")
+    s3_key = f"{config.settings.s3_slide_folder}/{slide_id}.{ext}"
+
+    # Create directory if needed
+    os.makedirs(config.settings.slide_dir, exist_ok=True)
+
+    # Check if exists in S3
+    if not aws_utils.file_exists(bucket=config.settings.s3_bucket_name, key=s3_key):
+        raise ValueError(f"Slide {slide_id} not found in storage")
+
+    # Download from S3
+    aws_utils.download_file(
+        bucket=config.settings.s3_bucket_name, key=s3_key, local_path=local_path
+    )
+
+    return local_path
 
 
 def gpu_render_tile(
@@ -149,3 +206,152 @@ def load_inference_file(pkl_path: str) -> Any:
     """Load inference results from pickle file."""
     with open(pkl_path, "rb") as f:
         return pickle.load(f)
+
+
+async def ensure_slide_local_async(slide_id: int, ext: str) -> str:
+    """
+    Ensures a slide is available locally, downloading from S3 if needed.
+    
+    When multiple requests ask for the same slide:
+    - First request downloads the file
+    - Subsequent requests wait for the download to complete
+    - All requests return the same result
+    
+    This prevents duplicate downloads while keeping the server responsive.
+    """
+    local_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{ext}")
+    
+    # Fast path: slide already exists locally
+    if os.path.exists(local_path):
+        return local_path
+    
+    # Coordinate with other potential downloads of the same slide
+    download_key = f"slide_{slide_id}_{ext}"
+    
+    # Determine if we should download or wait for another request's download
+    download_event = None
+    i_should_download = False
+    
+    with _downloads_lock:
+        if download_key in _downloads_in_progress:
+            # Another request is already downloading this slide
+            download_event = _downloads_in_progress[download_key]
+        else:
+            # We'll download it and let others know when we're done
+            download_event = asyncio.Event()
+            _downloads_in_progress[download_key] = download_event
+            i_should_download = True
+    
+    # Path 1: We're responsible for downloading the slide
+    if i_should_download:
+        try:
+            # Double-check the file doesn't exist (race condition prevention)
+            if not os.path.exists(local_path):
+                # Perform the actual download in a thread pool (non-blocking)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    _executor,
+                    _download_slide_from_s3,
+                    slide_id,
+                    ext,
+                )
+            
+            # Notify all waiting requests that the download is complete
+            download_event.set()
+            return local_path
+            
+        except Exception as e:
+            # Notify waiters even on failure (prevents hanging)
+            download_event.set()
+            raise e
+            
+        finally:
+            # Clean up the download tracker
+            with _downloads_lock:
+                _downloads_in_progress.pop(download_key, None)
+    
+    # Path 2: Another request is downloading, we wait for it
+    else:
+        # Wait for the download to complete (async, non-blocking)
+        await download_event.wait()
+        
+        # Verify the file now exists
+        if os.path.exists(local_path):
+            return local_path
+        else:
+            # The download failed in the other request
+            raise ValueError(f"Download of slide {slide_id} failed in another request")
+
+
+async def ensure_predictions_local_async(slide_id: int) -> str:
+    """
+    Ensures prediction results are available locally, downloading from S3 if needed.
+    
+    When multiple requests ask for the same predictions:
+    - First request downloads the file
+    - Subsequent requests wait for the download to complete
+    - All requests return the same result
+    
+    This prevents duplicate downloads while keeping the server responsive.
+    """
+    pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
+    
+    # Fast path: predictions already exist locally
+    if os.path.exists(pkl_path):
+        return pkl_path
+    
+    # Coordinate with other potential downloads of the same predictions
+    download_key = f"predictions_{slide_id}"
+    
+    # Determine if we should download or wait for another request's download
+    download_event = None
+    i_should_download = False
+    
+    with _downloads_lock:
+        if download_key in _downloads_in_progress:
+            # Another request is already downloading these predictions
+            download_event = _downloads_in_progress[download_key]
+        else:
+            # We'll download it and let others know when we're done
+            download_event = asyncio.Event()
+            _downloads_in_progress[download_key] = download_event
+            i_should_download = True
+    
+    # Path 1: We're responsible for downloading the predictions
+    if i_should_download:
+        try:
+            # Double-check the file doesn't exist (race condition prevention)
+            if not os.path.exists(pkl_path):
+                # Perform the actual download in a thread pool (non-blocking)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    _executor,
+                    _download_predictions_from_s3,
+                    slide_id,
+                )
+            
+            # Notify all waiting requests that the download is complete
+            download_event.set()
+            return pkl_path
+            
+        except Exception as e:
+            # Notify waiters even on failure (prevents hanging)
+            download_event.set()
+            raise e
+            
+        finally:
+            # Clean up the download tracker
+            with _downloads_lock:
+                _downloads_in_progress.pop(download_key, None)
+    
+    # Path 2: Another request is downloading, we wait for it
+    else:
+        # Wait for the download to complete (async, non-blocking)
+        await download_event.wait()
+        
+        # Verify the file now exists
+        if os.path.exists(pkl_path):
+            return pkl_path
+        else:
+            # The download failed in the other request
+            raise ValueError(f"Download of predictions for slide {slide_id} failed in another request")

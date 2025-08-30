@@ -8,11 +8,11 @@ via any medium, is strictly prohibited.
 Viewer services for Deep Zoom tile serving and predictions
 """
 
-import os
+import asyncio
 from typing import Dict
 
 from core import config
-from utils import aws_utils, logging_utils, postgres_utils, slide_utils
+from utils import logging_utils, postgres_utils, slide_utils
 
 logger = logging_utils.get_logger("cytolens.services.viewer")
 
@@ -25,11 +25,20 @@ async def create_dzi(slide_id: int, user_id: int) -> str:
     slide_db = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
 
     if not slide_db:
+        logger.warning(
+            f"Unauthorized DZI access attempt for slide {slide_id} by user {user_id}"
+        )
         raise ValueError(f"Slide {slide_id} not found")
 
     ext = slide_db["type"]
-    slide_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{ext}")
-    _, full_width, full_height, _, _ = slide_utils.get_slide_info_cached(slide_path)
+    # Ensure slide is available locally (download from S3 if needed)
+    # Using async version to prevent blocking other requests during download
+    slide_path = await slide_utils.ensure_slide_local_async(slide_id=slide_id, ext=ext)
+    _, full_width, full_height, _, _ = slide_utils.get_slide_info_cached(
+        slide_path=slide_path
+    )
+
+    logger.info(f"DZI accessed for slide {slide_id} by user {user_id}")
 
     # Build the DZI XML descriptor
     xml = (
@@ -42,7 +51,6 @@ async def create_dzi(slide_id: int, user_id: int) -> str:
         "</Image>"
     )
 
-    logger.debug(f"DZI created for slide {slide_id} by user ID: {user_id}")
     return xml
 
 
@@ -56,12 +64,17 @@ async def get_tile(
     slide_db = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
 
     if not slide_db:
+        logger.warning(
+            f"Unauthorized tile access attempt for slide {slide_id} by user {user_id}"
+        )
         raise ValueError(f"Slide {slide_id} not found")
 
     ext = slide_db["type"]
-    slide_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{ext}")
+    # Ensure slide is available locally (download from S3 if needed)
+    # Using async version to prevent blocking other requests during download
+    slide_path = await slide_utils.ensure_slide_local_async(slide_id=slide_id, ext=ext)
     slide, full_width, full_height, level_downsamples, dz_dims = (
-        slide_utils.get_slide_info_cached(slide_path)
+        slide_utils.get_slide_info_cached(slide_path=slide_path)
     )
 
     # Render tile using GPU acceleration
@@ -76,6 +89,9 @@ async def get_tile(
         row=row,
     )
 
+    logger.info(
+        f"Tile accessed for slide {slide_id} (L{level}/{col}_{row}) by user {user_id}"
+    )
     return jpeg_bytes
 
 
@@ -88,30 +104,21 @@ async def get_predictions(slide_id: int, user_id: int) -> Dict:
     slide_db = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
 
     if not slide_db:
+        logger.warning(
+            f"Unauthorized predictions access attempt for slide {slide_id} by user {user_id}"
+        )
         raise ValueError(f"Slide {slide_id} not found")
 
-    pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
-
-    # Download from S3 if not local
-    if not os.path.exists(pkl_path):
-        s3_key = f"{config.settings.s3_results_folder}/{slide_id}.pkl"
-        os.makedirs(config.settings.prediction_dir, exist_ok=True)
-
-        # Check if file exists in S3
-        if not aws_utils.file_exists(bucket=config.settings.s3_bucket_name, key=s3_key):
-            raise ValueError(f"Predictions not found for slide {slide_id}")
-
-        # Download from S3
-        aws_utils.download_file(
-            bucket=config.settings.s3_bucket_name, key=s3_key, local_path=pkl_path
-        )
-        logger.info(
-            f"Predictions downloaded from S3 for slide {slide_id} by user ID: {user_id}"
-        )
+    # Ensure predictions are available locally (download from S3 if needed)
+    # Using async version to prevent blocking other requests during download
+    pkl_path = await slide_utils.ensure_predictions_local_async(slide_id=slide_id)
 
     ext = slide_db["type"]
-    slide_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{ext}")
-    _, full_width, full_height, _, _ = slide_utils.get_slide_info_cached(slide_path)
+    # Ensure slide is also available locally to get dimensions
+    slide_path = await slide_utils.ensure_slide_local_async(slide_id=slide_id, ext=ext)
+    _, full_width, full_height, _, _ = slide_utils.get_slide_info_cached(
+        slide_path=slide_path
+    )
     results = slide_utils.load_inference_file(pkl_path=pkl_path)
 
     # Prepare segments with bounding boxes for efficient rendering
@@ -136,8 +143,8 @@ async def get_predictions(slide_id: int, user_id: int) -> Dict:
             }
         )
 
-    logger.debug(
-        f"Predictions retrieved for slide {slide_id} by user ID: {user_id}, segments: {len(segments)}"
+    logger.info(
+        f"Predictions accessed for slide {slide_id} by user {user_id} ({len(segments)} segments)"
     )
 
     return {

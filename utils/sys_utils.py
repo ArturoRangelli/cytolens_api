@@ -47,11 +47,19 @@ def get_file_size_text(bytes_value: int) -> str:
 
 def get_current_time(milliseconds=False) -> str:
     """
-    Gets current time
+    Gets current time (legacy format for file names and IDs)
     """
     if milliseconds:
         return datetime.now().strftime("%Y_%m_%d_%H_%M_%S_%f")
     return datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+
+
+def get_utc_timestamp() -> str:
+    """
+    Gets current UTC timestamp in ISO 8601 format for database storage
+    Returns: String like "2025-08-28T05:08:17Z"
+    """
+    return datetime.utcnow().isoformat() + "Z"
 
 
 def delete_local_file(file_path: str) -> bool:

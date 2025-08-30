@@ -23,7 +23,7 @@ async def get_slides(user_id: int) -> List[dict]:
     Get all slides for a specific user.
     """
     slides = postgres_utils.get_slides(owner_id=user_id)
-    logger.debug(f"Slides retrieved: {len(slides)} slides for user ID: {user_id}")
+    logger.info(f"Slides accessed: {len(slides)} slides retrieved by user {user_id}")
     return slides
 
 
@@ -35,9 +35,12 @@ async def get_slide(slide_id: int, user_id: int) -> Dict:
     slide = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
 
     if not slide:
+        logger.warning(
+            f"Unauthorized slide access attempt for slide {slide_id} by user {user_id}"
+        )
         raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
 
-    logger.debug(f"Slide retrieved: ID {slide_id} for user ID: {user_id}")
+    logger.info(f"Slide accessed: {slide_id} by user {user_id}")
     return slide
 
 
@@ -49,8 +52,8 @@ async def get_slide_tasks(slide_id: int, user_id: int) -> List[Dict]:
     # Get tasks - ownership is verified in the query via join
     tasks = postgres_utils.get_tasks_by_slide(slide_id=slide_id, user_id=user_id)
 
-    logger.debug(
-        f"Tasks retrieved: {len(tasks)} tasks for slide {slide_id}, user ID: {user_id}"
+    logger.info(
+        f"Slide tasks accessed: {len(tasks)} tasks for slide {slide_id} by user {user_id}"
     )
 
     # Format tasks for response
@@ -88,7 +91,7 @@ async def start_upload(name: str, file_size: int, user_id: int) -> Dict:
         bucket=config.settings.s3_bucket_name, key=s3_key
     )
     logger.info(
-        f"Upload started for slide '{name}' by user ID: {user_id}, upload_id: {upload_id}"
+        f"Upload started for slide '{name}' by user {user_id} (upload_id: {upload_id})"
     )
 
     # Calculate number of parts (100MB per part)
@@ -149,8 +152,13 @@ async def finish_upload(
         parts=parts,
     )
 
+    # Get the actual file size from S3
+    file_size = aws_utils.get_object_size(
+        bucket=config.settings.s3_bucket_name, key=s3_key
+    )
+
     # Create slide record
-    created_at = sys_utils.get_current_time(milliseconds=False)
+    created_at = sys_utils.get_utc_timestamp()
     ext = sys_utils.get_file_ext(filename=filename).replace(".", "")
 
     slide = postgres_utils.set_slide(
@@ -160,6 +168,7 @@ async def finish_upload(
         created_at=created_at,
         original_filename=filename,
         type=ext,
+        file_size=file_size,
     )
 
     # Move from temp to permanent S3 location
@@ -171,17 +180,7 @@ async def finish_upload(
 
     aws_utils.delete_file(bucket=config.settings.s3_bucket_name, key=s3_key)
 
-    # Download to local for GPU processing
-    local_path = os.path.join(config.settings.slide_dir, f"{slide['id']}.{ext}")
-    os.makedirs(config.settings.slide_dir, exist_ok=True)
-
-    aws_utils.download_file(
-        bucket=config.settings.s3_bucket_name, key=permanent_key, local_path=local_path
-    )
-
-    logger.info(
-        f"Slide uploaded successfully: '{name}' (ID: {slide['id']}) by user ID: {user_id}"
-    )
+    logger.info(f"Slide uploaded: '{name}' (ID: {slide['id']}) by user {user_id}")
 
     return {"slide_id": slide["id"], "status": "ready"}
 
@@ -207,13 +206,16 @@ async def delete_slide(slide_id: int, user_id: int) -> Dict:
     slide = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
 
     if not slide:
+        logger.warning(
+            f"Unauthorized delete attempt for slide {slide_id} by user {user_id}"
+        )
         raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
 
     # Step 2: Build S3 keys for both possible locations
     file_ext = slide.get("type", "svs")
     permanent_s3_key = f"{config.settings.s3_slide_folder}/{slide_id}.{file_ext}"
 
-    # Step 3: Delete from S3 (if exists)
+    # Step 3: Delete slide from S3 (if exists)
     if aws_utils.file_exists(
         bucket=config.settings.s3_bucket_name, key=permanent_s3_key
     ):
@@ -221,20 +223,29 @@ async def delete_slide(slide_id: int, user_id: int) -> Dict:
             bucket=config.settings.s3_bucket_name, key=permanent_s3_key
         )
 
-    # Step 4: Delete from local storage (if exists)
+    # Step 4: Delete predictions from S3 (if exists)
+    predictions_s3_key = f"{config.settings.s3_results_folder}/{slide_id}.pkl"
+    if aws_utils.file_exists(
+        bucket=config.settings.s3_bucket_name, key=predictions_s3_key
+    ):
+        aws_utils.delete_file(
+            bucket=config.settings.s3_bucket_name, key=predictions_s3_key
+        )
+
+    # Step 5: Delete from local storage (if exists)
     local_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{file_ext}")
     sys_utils.delete_local_file(local_path)
 
-    # Step 5: Delete predictions from local storage (if exists)
+    # Step 6: Delete predictions from local storage (if exists)
     pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
     sys_utils.delete_local_file(pkl_path)
 
-    # Step 6: Delete from database
+    # Step 7: Delete from database
     postgres_utils.delete_slide(slide_id=slide_id, owner_id=user_id)
 
-    logger.info(f"Slide deleted: ID {slide_id} by user ID: {user_id}")
+    logger.info(f"Slide deleted: {slide_id} by user {user_id}")
 
-    # Step 7: Return success message
+    # Step 8: Return success message
     return {"message": f"Slide {slide_id} deleted successfully"}
 
 
@@ -258,12 +269,21 @@ async def bulk_delete_slides(slide_ids: List[int], user_id: int) -> Dict:
         file_ext = slide.get("type", "svs")
         permanent_s3_key = f"{config.settings.s3_slide_folder}/{slide_id}.{file_ext}"
 
-        # Delete from S3 (if exists)
+        # Delete slide from S3 (if exists)
         if aws_utils.file_exists(
             bucket=config.settings.s3_bucket_name, key=permanent_s3_key
         ):
             aws_utils.delete_file(
                 bucket=config.settings.s3_bucket_name, key=permanent_s3_key
+            )
+
+        # Delete predictions from S3 (if exists)
+        predictions_s3_key = f"{config.settings.s3_results_folder}/{slide_id}.pkl"
+        if aws_utils.file_exists(
+            bucket=config.settings.s3_bucket_name, key=predictions_s3_key
+        ):
+            aws_utils.delete_file(
+                bucket=config.settings.s3_bucket_name, key=predictions_s3_key
             )
 
         # Delete from local storage (if exists)
@@ -280,11 +300,11 @@ async def bulk_delete_slides(slide_ids: List[int], user_id: int) -> Dict:
 
     if deleted_ids:
         logger.info(
-            f"Bulk delete: {len(deleted_ids)} slides deleted by user ID: {user_id}, IDs: {deleted_ids}"
+            f"Bulk delete: {len(deleted_ids)} slides deleted by user {user_id} (IDs: {deleted_ids})"
         )
     if failed_ids:
         logger.warning(
-            f"Bulk delete: {len(failed_ids)} slides failed for user ID: {user_id}, IDs: {failed_ids}"
+            f"Bulk delete failed: {len(failed_ids)} slides not found for user {user_id} (IDs: {failed_ids})"
         )
 
     return {
@@ -304,6 +324,9 @@ async def update_slide(slide_id: int, name: str, user_id: int) -> Dict:
     slide = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
 
     if not slide:
+        logger.warning(
+            f"Unauthorized update attempt for slide {slide_id} by user {user_id}"
+        )
         raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
 
     # Step 2: If the name is the same, no need to update
@@ -323,8 +346,6 @@ async def update_slide(slide_id: int, name: str, user_id: int) -> Dict:
     if not updated_slide:
         raise ValueError(constants.ErrorMessage.UPDATE_FAILED)
 
-    logger.info(
-        f"Slide updated: ID {slide_id} renamed to '{name}' by user ID: {user_id}"
-    )
+    logger.info(f"Slide updated: {slide_id} renamed to '{name}' by user {user_id}")
 
     return {"message": f"Slide {slide_id} updated successfully", "slide": updated_slide}

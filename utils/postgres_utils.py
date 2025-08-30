@@ -11,6 +11,7 @@ PostgreSQL database utilities and models
 from contextlib import contextmanager
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     Float,
     ForeignKey,
@@ -66,6 +67,7 @@ class Slide(Base):
 
     original_filename = Column(String, nullable=False)
     type = Column(String, nullable=False)
+    file_size = Column(BigInteger, nullable=False)
 
     # Enforce unique slide name per user at the DB level
     __table_args__ = (
@@ -229,7 +231,7 @@ def set_apikey(
     Create a new API key for a user.
     """
     with session_scope() as s:
-        created_at = sys_utils.get_current_time(milliseconds=False)
+        created_at = sys_utils.get_utc_timestamp()
         api_key = ApiKey(
             user_id=user_id,
             key=hashed_key,
@@ -262,6 +264,7 @@ def set_slide(
     created_at: str,
     original_filename: str,
     type: str,
+    file_size: int,
 ) -> dict:
     """
     Insert a new slide into the database.
@@ -274,6 +277,7 @@ def set_slide(
             created_at=created_at,
             original_filename=original_filename,
             type=type,
+            file_size=file_size,
         )
         s.add(slide)
         s.flush()  # So slide.id is available before commit
@@ -571,7 +575,7 @@ def create_task(
             state=state,
             confidence=confidence,
             message=message,
-            created_at=sys_utils.get_current_time(milliseconds=False),
+            created_at=sys_utils.get_utc_timestamp(),
         )
         s.add(task)
         s.flush()

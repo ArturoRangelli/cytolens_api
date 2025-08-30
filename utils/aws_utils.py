@@ -128,3 +128,11 @@ def abort_multipart_upload(bucket: str, key: str, upload_id: str) -> None:
         s3_client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
     except ClientError:
         pass  # Already aborted or doesn't exist
+
+
+def get_object_size(bucket: str, key: str) -> int:
+    """
+    Get the size of an S3 object in bytes.
+    """
+    response = s3_client.head_object(Bucket=bucket, Key=key)
+    return response['ContentLength']

@@ -31,20 +31,66 @@ async def register_user(username: str, password: str) -> None:
 
 async def login_user(username: str, password: str) -> Tuple[str, str]:
     """
-    Validate credentials and return access token and CSRF token for cookies.
+    Validate credentials and return access and refresh tokens.
     Raises ValueError on invalid credentials.
     """
     user = postgres_utils.get_user_by_username(username=username)
     if not user or not password_utils.verify_password(
         plain_password=password, hashed_password=user["password_hash"]
     ):
+        logger.warning(f"Failed login attempt for username: {username}")
         raise ValueError("Invalid credentials")
 
+    # Create both tokens for the session
     access_token = jwt_utils.create_access_token(identity=username)
-    csrf_token = jwt_utils.get_csrf_token(access_token=access_token)
+    refresh_token = jwt_utils.create_refresh_token(identity=username)
     logger.info(f"User login: {username} (ID: {user['id']})")
 
-    return access_token, csrf_token
+    return access_token, refresh_token
+
+
+async def refresh_tokens(refresh_token: str) -> Tuple[str, str, str]:
+    """
+    Validate refresh token and issue new token pair.
+
+    Implements sliding window expiration - each refresh resets the 30-minute
+    inactivity timer, allowing users to stay logged in indefinitely while active.
+    """
+    if not refresh_token:
+        raise ValueError("Refresh token required")
+
+    # Decode and validate refresh token - will raise if invalid
+    payload = jwt_utils.decode_token(refresh_token)
+
+    # Verify it's a refresh token
+    if payload.get("type") != "refresh":
+        raise ValueError("Invalid token type")
+
+    username = payload.get("sub")
+    if not username:
+        raise ValueError("Invalid token")
+
+    # Verify user still exists and is active
+    user = postgres_utils.get_user_by_username(username=username)
+    if not user:
+        raise ValueError("User no longer exists")
+
+    # Generate new token pair
+    new_access_token = jwt_utils.create_access_token(identity=username)
+    new_refresh_token = jwt_utils.create_refresh_token(identity=username)
+
+    logger.info(f"Token refreshed for user: {username}")
+
+    return new_access_token, new_refresh_token, username
+
+
+async def logout_user(username: str) -> None:
+    """
+    Log user logout event.
+    """
+    user = postgres_utils.get_user_by_username(username=username)
+    if user:
+        logger.info(f"User logout: {username} (ID: {user['id']})")
 
 
 async def create_api_key(
