@@ -211,41 +211,54 @@ async def delete_slide(slide_id: int, user_id: int) -> Dict:
         )
         raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
 
-    # Step 2: Build S3 keys for both possible locations
-    file_ext = slide.get("type", "svs")
-    permanent_s3_key = f"{config.settings.s3_slide_folder}/{slide_id}.{file_ext}"
+    # Step 2: Build S3 key for the slide
+    slide_ext = slide.get("type", "svs")
+    slide_s3_key = f"{config.settings.s3_slide_folder}/{slide_id}.{slide_ext}"
 
     # Step 3: Delete slide from S3 (if exists)
     if aws_utils.file_exists(
-        bucket=config.settings.s3_bucket_name, key=permanent_s3_key
+        bucket=config.settings.s3_bucket_name, key=slide_s3_key
     ):
         aws_utils.delete_file(
-            bucket=config.settings.s3_bucket_name, key=permanent_s3_key
+            bucket=config.settings.s3_bucket_name, key=slide_s3_key
         )
 
-    # Step 4: Delete predictions from S3 (if exists)
-    predictions_s3_key = f"{config.settings.s3_results_folder}/{slide_id}.pkl"
-    if aws_utils.file_exists(
-        bucket=config.settings.s3_bucket_name, key=predictions_s3_key
-    ):
-        aws_utils.delete_file(
-            bucket=config.settings.s3_bucket_name, key=predictions_s3_key
+    # Step 4: Delete slide from local storage (if exists)
+    slide_local_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{slide_ext}")
+    sys_utils.delete_local_file(slide_local_path)
+
+    # Step 5: Get all tasks for this slide to delete their predictions
+    tasks = postgres_utils.get_tasks_by_slide(slide_id=slide_id, user_id=user_id)
+
+    # Delete predictions for each task (named by inference_task_id)
+    for task in tasks:
+        inference_task_id = task.get("inference_task_id")
+        if not inference_task_id:
+            continue
+
+        # Delete prediction from S3
+        prediction_s3_key = (
+            f"{config.settings.s3_results_folder}/{inference_task_id}.pkl"
         )
+        if aws_utils.file_exists(
+            bucket=config.settings.s3_bucket_name, key=prediction_s3_key
+        ):
+            aws_utils.delete_file(
+                bucket=config.settings.s3_bucket_name, key=prediction_s3_key
+            )
 
-    # Step 5: Delete from local storage (if exists)
-    local_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{file_ext}")
-    sys_utils.delete_local_file(local_path)
+        # Delete prediction from local storage
+        prediction_local_path = os.path.join(
+            config.settings.prediction_dir, f"{inference_task_id}.pkl"
+        )
+        sys_utils.delete_local_file(prediction_local_path)
 
-    # Step 6: Delete predictions from local storage (if exists)
-    pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
-    sys_utils.delete_local_file(pkl_path)
-
-    # Step 7: Delete from database
+    # Step 6: Delete from database (this will cascade delete tasks)
     postgres_utils.delete_slide(slide_id=slide_id, owner_id=user_id)
 
     logger.info(f"Slide deleted: {slide_id} by user {user_id}")
 
-    # Step 8: Return success message
+    # Step 7: Return success message
     return {"message": f"Slide {slide_id} deleted successfully"}
 
 
@@ -265,34 +278,47 @@ async def bulk_delete_slides(slide_ids: List[int], user_id: int) -> Dict:
             failed_ids.append(slide_id)
             continue
 
-        # Build S3 key
-        file_ext = slide.get("type", "svs")
-        permanent_s3_key = f"{config.settings.s3_slide_folder}/{slide_id}.{file_ext}"
+        # Build slide S3 key
+        slide_ext = slide.get("type", "svs")
+        slide_s3_key = f"{config.settings.s3_slide_folder}/{slide_id}.{slide_ext}"
 
         # Delete slide from S3 (if exists)
         if aws_utils.file_exists(
-            bucket=config.settings.s3_bucket_name, key=permanent_s3_key
+            bucket=config.settings.s3_bucket_name, key=slide_s3_key
         ):
             aws_utils.delete_file(
-                bucket=config.settings.s3_bucket_name, key=permanent_s3_key
+                bucket=config.settings.s3_bucket_name, key=slide_s3_key
             )
 
-        # Delete predictions from S3 (if exists)
-        predictions_s3_key = f"{config.settings.s3_results_folder}/{slide_id}.pkl"
-        if aws_utils.file_exists(
-            bucket=config.settings.s3_bucket_name, key=predictions_s3_key
-        ):
-            aws_utils.delete_file(
-                bucket=config.settings.s3_bucket_name, key=predictions_s3_key
+        # Delete slide from local storage (if exists)
+        slide_local_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{slide_ext}")
+        sys_utils.delete_local_file(slide_local_path)
+
+        # Get all tasks for this slide to delete their predictions
+        tasks = postgres_utils.get_tasks_by_slide(slide_id=slide_id, user_id=user_id)
+
+        # Delete predictions for each task (named by inference_task_id)
+        for task in tasks:
+            inference_task_id = task.get("inference_task_id")
+            if not inference_task_id:
+                continue
+
+            # Delete prediction from S3 (if exists)
+            prediction_s3_key = (
+                f"{config.settings.s3_results_folder}/{inference_task_id}.pkl"
             )
+            if aws_utils.file_exists(
+                bucket=config.settings.s3_bucket_name, key=prediction_s3_key
+            ):
+                aws_utils.delete_file(
+                    bucket=config.settings.s3_bucket_name, key=prediction_s3_key
+                )
 
-        # Delete from local storage (if exists)
-        local_path = os.path.join(config.settings.slide_dir, f"{slide_id}.{file_ext}")
-        sys_utils.delete_local_file(local_path)
-
-        # Delete predictions from local storage (if exists)
-        pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
-        sys_utils.delete_local_file(pkl_path)
+            # Delete prediction from local storage (if exists)
+            prediction_local_path = os.path.join(
+                config.settings.prediction_dir, f"{inference_task_id}.pkl"
+            )
+            sys_utils.delete_local_file(prediction_local_path)
 
         # Delete from database
         postgres_utils.delete_slide(slide_id=slide_id, owner_id=user_id)

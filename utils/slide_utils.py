@@ -71,20 +71,20 @@ def _load_slide_info(
     return slide, full_width, full_height, level_downsamples, dz_dims
 
 
-def _download_predictions_from_s3(slide_id: int) -> str:
+def _download_predictions_from_s3(inference_task_id: str) -> str:
     """
     Download predictions from S3 to local storage.
     This function ONLY handles the download, no checking.
     """
-    pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
-    s3_key = f"{config.settings.s3_results_folder}/{slide_id}.pkl"
+    pkl_path = os.path.join(config.settings.prediction_dir, f"{inference_task_id}.pkl")
+    s3_key = f"{config.settings.s3_results_folder}/{inference_task_id}.pkl"
 
     # Create directory if needed
     os.makedirs(config.settings.prediction_dir, exist_ok=True)
 
     # Check if exists in S3
     if not aws_utils.file_exists(bucket=config.settings.s3_bucket_name, key=s3_key):
-        raise ValueError(f"Predictions not found for slide {slide_id}")
+        raise ValueError(f"Predictions not found for task {inference_task_id}")
 
     # Download from S3
     aws_utils.download_file(
@@ -283,20 +283,18 @@ async def ensure_slide_local_async(slide_id: int, ext: str) -> str:
             raise ValueError(f"Download of slide {slide_id} failed in another request")
 
 
-def ensure_predictions_local(slide_id: int) -> str:
+def ensure_predictions_local(inference_task_id: str) -> str:
     """
     Ensures prediction results are available locally, downloading from S3 if needed.
     Simple synchronous version since pkl files are small.
     """
-    pkl_path = os.path.join(config.settings.prediction_dir, f"{slide_id}.pkl")
+    pkl_path = os.path.join(config.settings.prediction_dir, f"{inference_task_id}.pkl")
 
     # If predictions already exist locally, return the path
-    # TODO: we will need to save prediction files with multiple names for
-    # the same slide, one slide can have multiple taks = multiple prediction files
-    # if os.path.exists(pkl_path):
-    #     return pkl_path
+    if os.path.exists(pkl_path):
+        return pkl_path
 
     # Download from S3 if not present locally
-    _download_predictions_from_s3(slide_id)
+    _download_predictions_from_s3(inference_task_id)
 
     return pkl_path

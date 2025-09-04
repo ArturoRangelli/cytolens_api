@@ -13,7 +13,6 @@ from typing import Dict
 from fastapi import APIRouter, Depends, Response
 
 from api.dependencies.security import verify_user_access
-from api.schemas.viewer import PredictionsResponse
 from api.services import viewer as viewer_service
 
 router = APIRouter(
@@ -62,22 +61,3 @@ async def get_tile(
 
     # Return JPEG response
     return Response(content=tile_bytes, media_type="image/jpeg")
-
-
-@router.get("/predictions/{slide_id}", response_model=PredictionsResponse)
-async def get_predictions(
-    slide_id: int, current_user: Dict = Depends(verify_user_access)
-) -> PredictionsResponse:
-    """
-    Get inference predictions for a slide.
-    Returns polygons with bounding boxes for efficient rendering.
-    Requires authentication and slide ownership.
-    """
-    predictions = await viewer_service.get_predictions(
-        slide_id=slide_id, user_id=current_user["id"]
-    )
-
-    return PredictionsResponse(
-        segments=predictions["segments"],
-        wsi_dimensions=predictions["wsi_dimensions"],
-    )

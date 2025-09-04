@@ -117,6 +117,27 @@ async def cancel_task(
     )
 
 
+@router.get("/tasks/{task_id}/predictions", response_model=inference_schemas.PredictionsResponse)
+async def get_task_predictions(
+    task_id: int,
+    current_user: dict = Depends(verify_user_access),
+) -> inference_schemas.PredictionsResponse:
+    """
+    Get segmentation predictions for a completed inference task.
+    Returns polygon masks with computed bounds for efficient rendering.
+    Requires authentication and task ownership.
+    Task must be in SUCCESS state to have predictions.
+    """
+    predictions = await inference_service.get_task_predictions(
+        task_id=task_id, user_id=current_user["id"]
+    )
+    
+    return inference_schemas.PredictionsResponse(
+        segments=predictions["segments"],
+        wsi_dimensions=predictions["wsi_dimensions"],
+    )
+
+
 @router.post("/webhook/callback")
 async def inference_webhook(
     payload: inference_schemas.WebhookPayload,

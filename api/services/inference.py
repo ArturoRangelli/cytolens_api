@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 import httpx
 
 from core import config, constants
-from utils import logging_utils, postgres_utils, sys_utils
+from utils import logging_utils, postgres_utils, slide_utils, sys_utils
 
 logger = logging_utils.get_logger("cytolens.services.inference")
 
@@ -208,6 +208,79 @@ async def cancel_task(task_id: str, user_id: int) -> Dict[str, Any]:
         "id": str(task["id"]),
         "state": data["state"],  # Return what the inference service sent
         "message": constants.TaskMessage.CANCELLED,
+    }
+
+
+async def get_task_predictions(task_id: int, user_id: int) -> Dict[str, Any]:
+    """
+    Get segmentation predictions for a completed inference task.
+    Downloads from S3 if not available locally.
+    """
+    # Get task by internal ID and verify user ownership
+    task = postgres_utils.get_task_by_id(task_id=task_id, user_id=user_id)
+
+    if not task:
+        logger.warning(
+            f"Unauthorized predictions access attempt for task {task_id} by user {user_id}"
+        )
+        raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
+
+    # Check if task completed successfully
+    if task["state"] != constants.TaskState.SUCCESS:
+        logger.warning(
+            f"Predictions requested for task {task_id} in state {task['state']}"
+        )
+        raise ValueError(constants.ErrorMessage.INVALID_STATE)
+
+    slide_id = task["slide_id"]
+    inference_task_id = task["inference_task_id"]  # Get external ID for file retrieval
+
+    # Get slide info for the file type
+    slide_db = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
+    if not slide_db:
+        raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
+
+    # Ensure predictions are available locally (download from S3 if needed)
+    # Using the external inference_task_id for the actual file
+    pkl_path = slide_utils.ensure_predictions_local(inference_task_id=inference_task_id)
+
+    ext = slide_db["type"]
+    # Ensure slide is also available locally to get dimensions
+    slide_path = await slide_utils.ensure_slide_local_async(slide_id=slide_id, ext=ext)
+    _, full_width, full_height, _, _ = slide_utils.get_slide_info_cached(
+        slide_path=slide_path
+    )
+    results = slide_utils.load_inference_file(pkl_path=pkl_path)
+
+    # Prepare segments with computed bounds for efficient rendering
+    segments = []
+    for seg in results.get("continuous_segments", []):
+        polygon = seg["polygon"]
+        xs = [p[0] for p in polygon]
+        ys = [p[1] for p in polygon]
+
+        segments.append(
+            {
+                "polygon": polygon,
+                "class_name": seg["class_name"],
+                "score": seg.get("score", 0.5),  # Include score from pickle file
+                "area": seg.get("area", 0),
+                "bounds": {
+                    "minX": min(xs),
+                    "maxX": max(xs),
+                    "minY": min(ys),
+                    "maxY": max(ys),
+                },
+            }
+        )
+
+    logger.info(
+        f"Predictions accessed for task {task_id} by user {user_id} ({len(segments)} segments)"
+    )
+
+    return {
+        "segments": segments,
+        "wsi_dimensions": {"width": full_width, "height": full_height},
     }
 
 

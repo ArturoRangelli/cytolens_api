@@ -8,10 +8,7 @@ via any medium, is strictly prohibited.
 Viewer services for Deep Zoom tile serving and predictions
 """
 
-import asyncio
-from typing import Dict
-
-from core import config
+from core import config, constants
 from utils import logging_utils, postgres_utils, slide_utils
 
 logger = logging_utils.get_logger("cytolens.services.viewer")
@@ -28,7 +25,7 @@ async def create_dzi(slide_id: int, user_id: int) -> str:
         logger.warning(
             f"Unauthorized DZI access attempt for slide {slide_id} by user {user_id}"
         )
-        raise ValueError(f"Slide {slide_id} not found")
+        raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
 
     ext = slide_db["type"]
     # Ensure slide is available locally (download from S3 if needed)
@@ -67,7 +64,7 @@ async def get_tile(
         logger.warning(
             f"Unauthorized tile access attempt for slide {slide_id} by user {user_id}"
         )
-        raise ValueError(f"Slide {slide_id} not found")
+        raise ValueError(constants.ErrorMessage.RESOURCE_NOT_FOUND)
 
     ext = slide_db["type"]
     # Ensure slide is available locally (download from S3 if needed)
@@ -93,60 +90,3 @@ async def get_tile(
         f"Tile accessed for slide {slide_id} (L{level}/{col}_{row}) by user {user_id}"
     )
     return jpeg_bytes
-
-
-async def get_predictions(slide_id: int, user_id: int) -> Dict:
-    """
-    Get inference predictions for a slide with bounding boxes.
-    Downloads from S3 if not available locally.
-    """
-    # Check if slide exists and it belongs to the user
-    slide_db = postgres_utils.get_slide_by_id(slide_id=slide_id, owner_id=user_id)
-
-    if not slide_db:
-        logger.warning(
-            f"Unauthorized predictions access attempt for slide {slide_id} by user {user_id}"
-        )
-        raise ValueError(f"Slide {slide_id} not found")
-
-    # Ensure predictions are available locally (download from S3 if needed)
-    pkl_path = slide_utils.ensure_predictions_local(slide_id=slide_id)
-
-    ext = slide_db["type"]
-    # Ensure slide is also available locally to get dimensions
-    slide_path = await slide_utils.ensure_slide_local_async(slide_id=slide_id, ext=ext)
-    _, full_width, full_height, _, _ = slide_utils.get_slide_info_cached(
-        slide_path=slide_path
-    )
-    results = slide_utils.load_inference_file(pkl_path=pkl_path)
-
-    # Prepare segments with bounding boxes for efficient rendering
-    segments = []
-    for seg in results.get("continuous_segments", []):
-        polygon = seg["polygon"]
-        xs = [p[0] for p in polygon]
-        ys = [p[1] for p in polygon]
-
-        segments.append(
-            {
-                "polygon": polygon,
-                "class_name": seg["class_name"],
-                "score": seg.get("score", 0.5),  # Include score from pickle file
-                "area": seg.get("area", 0),
-                "bounds": {
-                    "minX": min(xs),
-                    "maxX": max(xs),
-                    "minY": min(ys),
-                    "maxY": max(ys),
-                },
-            }
-        )
-
-    logger.info(
-        f"Predictions accessed for slide {slide_id} by user {user_id} ({len(segments)} segments)"
-    )
-
-    return {
-        "segments": segments,
-        "wsi_dimensions": {"width": full_width, "height": full_height},
-    }

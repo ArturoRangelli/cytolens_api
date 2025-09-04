@@ -33,6 +33,18 @@ class ErrorMessage:
     UPDATE_FAILED = "Update failed"
 
 
+# Authentication error messages
+class AuthErrorMessage:
+    USERNAME_EXISTS = "Username already exists"
+    INVALID_CREDENTIALS = "Invalid credentials"
+    REFRESH_TOKEN_REQUIRED = "Refresh token required"
+    INVALID_TOKEN_TYPE = "Invalid token type"
+    INVALID_TOKEN = "Invalid token"
+    USER_NOT_FOUND = "User no longer exists"
+    INVALID_SESSION = "Invalid session"
+    API_KEY_EXISTS = "API key with name '{}' already exists for this user"
+
+
 # Task messages
 class TaskMessage:
     QUEUED = "Inference task queued"

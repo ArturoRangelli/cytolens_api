@@ -8,7 +8,7 @@ via any medium, is strictly prohibited.
 Inference schemas for AI analysis task management
 """
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -62,3 +62,36 @@ class WebhookPayload(BaseModel):
     state: str
     timestamp: str  # Datetime string format: "YYYY/MM/DD HH:MM:SS"
     message: str
+
+
+class SegmentBounds(BaseModel):
+    """Computed bounding box of a polygon segment for optimization."""
+
+    minX: float
+    maxX: float
+    minY: float
+    maxY: float
+
+
+class SegmentPrediction(BaseModel):
+    """Individual segmentation prediction with polygon mask."""
+
+    polygon: List[List[float]]  # List of [x, y] coordinates forming the polygon mask
+    class_name: str
+    score: float  # Confidence score (0-1)
+    area: float
+    bounds: SegmentBounds  # Computed bounds for spatial indexing/optimization
+
+
+class WsiDimensions(BaseModel):
+    """Whole slide image dimensions."""
+
+    width: int
+    height: int
+
+
+class PredictionsResponse(BaseModel):
+    """Response schema for segmentation predictions."""
+
+    segments: List[SegmentPrediction]
+    wsi_dimensions: WsiDimensions
