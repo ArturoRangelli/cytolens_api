@@ -110,8 +110,7 @@ async def get_predictions(slide_id: int, user_id: int) -> Dict:
         raise ValueError(f"Slide {slide_id} not found")
 
     # Ensure predictions are available locally (download from S3 if needed)
-    # Using async version to prevent blocking other requests during download
-    pkl_path = await slide_utils.ensure_predictions_local_async(slide_id=slide_id)
+    pkl_path = slide_utils.ensure_predictions_local(slide_id=slide_id)
 
     ext = slide_db["type"]
     # Ensure slide is also available locally to get dimensions
@@ -132,8 +131,8 @@ async def get_predictions(slide_id: int, user_id: int) -> Dict:
             {
                 "polygon": polygon,
                 "class_name": seg["class_name"],
+                "score": seg.get("score", 0.5),  # Include score from pickle file
                 "area": seg.get("area", 0),
-                "estimated_cells": seg.get("estimated_cells", 0),
                 "bounds": {
                     "minX": min(xs),
                     "maxX": max(xs),
@@ -150,9 +149,4 @@ async def get_predictions(slide_id: int, user_id: int) -> Dict:
     return {
         "segments": segments,
         "wsi_dimensions": {"width": full_width, "height": full_height},
-        "classes": {
-            "BETHESDA_2": {"color": "#22c55e", "alpha": 0.7},
-            "BETHESDA_6": {"color": "#ef4444", "alpha": 0.8},
-            "edge": {"color": "#ffffff", "alpha": 0.4},
-        },
     }

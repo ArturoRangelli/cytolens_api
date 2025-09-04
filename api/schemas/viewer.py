@@ -8,7 +8,7 @@ via any medium, is strictly prohibited.
 Viewer schemas for Deep Zoom tile serving and predictions
 """
 
-from typing import Dict, List
+from typing import List
 
 from pydantic import BaseModel
 
@@ -27,16 +27,9 @@ class PredictionSegment(BaseModel):
 
     polygon: List[List[float]]  # List of [x, y] coordinates
     class_name: str
+    score: float  # Confidence score (0-1)
     area: float
-    estimated_cells: int
     bounds: BoundingBox
-
-
-class ClassStyle(BaseModel):
-    """Visualization style for a class."""
-
-    color: str  # Hex color code
-    alpha: float  # Transparency (0-1)
 
 
 class WsiDimensions(BaseModel):
@@ -51,4 +44,3 @@ class PredictionsResponse(BaseModel):
 
     segments: List[PredictionSegment]
     wsi_dimensions: WsiDimensions
-    classes: Dict[str, ClassStyle]

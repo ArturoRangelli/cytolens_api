@@ -80,5 +80,4 @@ async def get_predictions(
     return PredictionsResponse(
         segments=predictions["segments"],
         wsi_dimensions=predictions["wsi_dimensions"],
-        classes=predictions["classes"],
     )
